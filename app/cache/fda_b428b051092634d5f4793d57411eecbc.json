@@ -1,0 +1,1 @@
+{"timestamp": 1750736944.9944751, "data": {"status": "error", "error_type": "client_error", "status_code": 404, "message": "Client error: Not Found"}, "endpoint": "https://api.fda.gov/drug/ndc.json", "params": {"search": "product_ndc:\"0002-3232*\"", "limit": 1}}

@@ -1,0 +1,29 @@
+services:
+  # A web service for the MCP server
+  - type: web
+    name: medical-mcp-server
+    runtime: python
+    plan: starter # Using the starter (free) tier - upgrade as needed
+    
+    # Build settings
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    
+    # Auto-deploy on code changes
+    autoDeploy: true
+    
+    # Environment variables
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+        
+      # API Keys - These should be set in the Render dashboard for security
+      - key: FDA_API_KEY
+        sync: false  # This means Render will prompt for the value
+      - key: NCBI_API_KEY
+        sync: false  # This means Render will prompt for the value
+      - key: CLINICAL_TRIALS_API_KEY
+        sync: false  # This means Render will prompt for the value
+      
+    # Health check
+    healthCheckPath: /health

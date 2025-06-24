@@ -1,0 +1,17 @@
+# Core dependencies
+fastapi==0.104.1
+uvicorn==0.24.0
+httpx==0.25.1
+python-dotenv==1.0.0
+pydantic==2.4.2
+
+# API and data handling
+json5==0.9.14
+ratelimit==2.2.1
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Documentation
+markdown==3.5
