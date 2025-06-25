@@ -1,10 +1,10 @@
 # Core dependencies
-fastapi==0.109.2
-uvicorn==0.27.0
-httpx==0.26.0
+fastapi==0.88.0
+uvicorn==0.20.0
+httpx==0.23.3
 python-dotenv==1.0.0
-pydantic==2.5.2
-typing-extensions==4.9.0
+pydantic==1.10.8
+typing-extensions==4.7.1
 
 # API and data handling
 json5==0.9.14
