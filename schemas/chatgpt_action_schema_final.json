@@ -228,6 +228,31 @@
                           "manufacturer_name": {
                             "type": "string",
                             "description": "Name of the manufacturer"
+                          },
+                          "packaging": {
+                            "type": "array",
+                            "description": "List of packaging variations with package-level NDC codes",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "package_ndc": {
+                                  "type": "string",
+                                  "description": "Package-level NDC code (e.g., 0088-2219-00)"
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "description": "Description of the package"
+                                },
+                                "marketing_start_date": {
+                                  "type": "string",
+                                  "description": "Date when marketing started for this package"
+                                },
+                                "sample": {
+                                  "type": "boolean",
+                                  "description": "Whether this package is a sample"
+                                }
+                              }
+                            }
                           }
                         }
                       }

@@ -51,7 +51,19 @@ async def search_ndc_compact(
     if active_ingredient:
         search_parts.append(f"active_ingredients.name:{active_ingredient}")
     if ndc:
-        search_parts.append(f"product_ndc:{ndc}")
+        # Support both product-level NDCs and package-level NDCs
+        # For package-level NDCs (e.g., 0088-2219-00), we need to search in packaging.package_ndc
+        # For product-level NDCs (e.g., 0088-2219), we search in product_ndc
+        
+        # Check if this is likely a package-level NDC (contains two hyphens)
+        if ndc.count('-') == 2 or len(ndc.split('-')[-1]) == 2:
+            # This is likely a package-level NDC, search in packaging.package_ndc
+            logger.info(f"Searching for package-level NDC: {ndc}")
+            search_parts.append(f"packaging.package_ndc:{ndc}")
+        else:
+            # This is likely a product-level NDC
+            logger.info(f"Searching for product-level NDC: {ndc}")
+            search_parts.append(f"product_ndc:{ndc}")
     
     if not search_parts:
         raise HTTPException(status_code=400, detail="At least one search parameter is required")
@@ -97,6 +109,16 @@ async def search_ndc_compact(
             logger.info(f"Found {total} total results, processing {len(response['results'])} products")
             
             for product in response["results"]:
+                # Extract packaging information including package_ndc values
+                packaging = []
+                for package in product.get("packaging", []):
+                    packaging.append({
+                        "package_ndc": package.get("package_ndc"),
+                        "description": package.get("description"),
+                        "marketing_start_date": package.get("marketing_start_date"),
+                        "sample": package.get("sample", False)
+                    })
+                
                 compact_product = {
                     "product_ndc": product.get("product_ndc"),
                     "brand_name": product.get("brand_name"),
@@ -104,6 +126,8 @@ async def search_ndc_compact(
                     "dosage_form": product.get("dosage_form"),
                     "route": product.get("route"),
                     "marketing_status": product.get("marketing_status"),
+                    # Include package-level NDC information
+                    "packaging": packaging,
                     "active_ingredients": [
                         {"name": ing.get("name"), "strength": ing.get("strength")}
                         for ing in product.get("active_ingredients", [])
