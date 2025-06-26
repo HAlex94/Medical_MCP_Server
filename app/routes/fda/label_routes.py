@@ -3,6 +3,7 @@ FDA Label Data Routes
 Endpoints for retrieving structured FDA label data for drugs
 """
 from fastapi import APIRouter, HTTPException, Query
+import os
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import logging
@@ -39,6 +40,33 @@ async def search_label_data(
     - Label data for the drug with requested fields
     """
     try:
+        # Add diagnostic logging to identify permission issue
+        logger.info("Starting FDA label search with debugging enabled")
+        
+        # Log environment information
+        logger.info(f"Environment variables: RENDER={os.environ.get('RENDER', 'Not set')}")
+        logger.info(f"Cache settings: CACHE_ENABLED={os.environ.get('ENABLE_API_CACHE', 'Not explicitly set')}")
+        logger.info(f"API_CACHE_DIR={os.environ.get('API_CACHE_DIR', 'Not explicitly set')}")
+        
+        # Log directory access attempts
+        for test_dir in ["/tmp", "/var", "/var/data"]:
+            try:
+                if os.path.exists(test_dir):
+                    logger.info(f"Directory {test_dir} exists")
+                    # Check if writable
+                    try:
+                        test_file = os.path.join(test_dir, "test_write_permission.tmp")
+                        with open(test_file, "w") as f:
+                            f.write("test")
+                        os.remove(test_file)
+                        logger.info(f"Directory {test_dir} is writable")
+                    except Exception as e:
+                        logger.info(f"Directory {test_dir} is not writable: {e}")
+                else:
+                    logger.info(f"Directory {test_dir} does not exist")
+            except Exception as e:
+                logger.info(f"Error checking directory {test_dir}: {e}")
+        
         # Format the search query to match FDA API requirements
         # Make the search more robust by normalizing the drug name and using a more flexible search
         # This handles edge cases and variations in drug names
