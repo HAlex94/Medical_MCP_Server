@@ -78,8 +78,8 @@ async def search_label_data(
         # This handles edge cases and variations in drug names
         normalized_name = name.strip().lower()
         
-        # Fix the query format to use API-compatible syntax - use OR instead of +
-        search_query = f"openfda.generic_name:\"{normalized_name}\"~2 OR openfda.brand_name:\"{normalized_name}\"~2"
+        # Use the verified working FDA API query format
+        search_query = f"openfda.brand_name:{normalized_name}+OR+openfda.generic_name:{normalized_name}"
         
         # FDA API endpoint for drug label search
         url = f"https://api.fda.gov/drug/label.json"
@@ -118,7 +118,7 @@ async def search_label_data(
             
             # Try a fallback search with just the active substance name
             # This is useful for generic drugs that may be listed under different names
-            fallback_query = f"openfda.substance_name:\"{normalized_name}\"~2"
+            fallback_query = f"openfda.substance_name:{normalized_name}"
             fallback_params = {
                 "search": fallback_query,
                 "limit": 1
