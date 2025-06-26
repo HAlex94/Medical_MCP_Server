@@ -1,10 +1,11 @@
-# Core dependencies
-fastapi==0.88.0
-uvicorn==0.20.0
-httpx==0.23.3
+# Core dependencies - Python 3.13 compatible
+fastapi==0.103.1
+uvicorn==0.23.2
+httpx==0.24.1
 python-dotenv==1.0.0
-pydantic==1.10.8
+pydantic==1.10.12
 typing-extensions==4.7.1
+starlette==0.27.0
 
 # API and data handling
 json5==0.9.14

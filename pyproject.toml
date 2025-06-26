@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+py_version = 39
+
+[project]
+name = "medical-mcp-server"
+version = "0.1.0"
+description = "Medical MCP Server for accessing pharmaceutical and medical data APIs"
+requires-python = ">=3.9, <3.10"
+authors = [
+    {name = "Hector Fernandez"}
+]
