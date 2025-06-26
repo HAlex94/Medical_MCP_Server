@@ -11,7 +11,7 @@ import os
 import logging
 from pydantic import BaseModel
 from app.utils.api_clients import make_request
-from app.utils.shared import get_fda_api_key
+from app.utils.api_clients import get_api_key
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ async def search_fda_label_with_fallbacks(
     for search_query in search_queries:
         try:
             url = f"https://api.fda.gov/drug/label.json?search={search_query}&limit={limit}"
-            api_key = get_fda_api_key()
+            api_key = get_api_key("FDA_API_KEY")
             if api_key:
                 url += f"&api_key={api_key}"
                 

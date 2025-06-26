@@ -11,7 +11,7 @@ import os
 import logging
 from pydantic import BaseModel
 from app.utils.api_clients import make_request
-from app.utils.shared import get_fda_api_key
+from app.utils.api_clients import get_api_key
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ async def find_reference_product(name=None, active_ingredient=None, ndc=None):
     for search_query in search_params:
         try:
             url = f"https://api.fda.gov/drug/drugsfda.json?search={search_query}&limit=10"
-            api_key = get_fda_api_key()
+            api_key = get_api_key("FDA_API_KEY")
             if api_key:
                 url += f"&api_key={api_key}"
                 
@@ -119,7 +119,7 @@ async def find_equivalent_products(reference_product, active_ingredient=None):
     
     try:
         url = f"https://api.fda.gov/drug/drugsfda.json?search={search_query}&limit=100"
-        api_key = get_fda_api_key()
+        api_key = get_api_key("FDA_API_KEY")
         if api_key:
             url += f"&api_key={api_key}"
             
