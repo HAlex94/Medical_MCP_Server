@@ -182,7 +182,8 @@ async def search_label_data(
         if "openfda" in label_data:
             # Extract useful openfda fields
             useful_openfda_fields = ["brand_name", "generic_name", "manufacturer_name", 
-                                    "product_type", "route", "substance_name"]
+                                    "product_type", "route", "substance_name", "product_ndc", 
+                                    "package_ndc", "ndc_product_code"]
             
             for field in useful_openfda_fields:
                 if field in label_data["openfda"]:
