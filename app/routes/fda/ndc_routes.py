@@ -37,24 +37,30 @@ async def search_ndc_compact(
     - limit: Maximum number of results to return (default: 10)
     - skip: Number of results to skip for pagination (default: 0)
     """
-    # Build search query
-    search_terms = []
-    if name:
-        search_terms.append(f'generic_name:"{name}" brand_name:"{name}"~')
-    if manufacturer:
-        search_terms.append(f'manufacturername:"{manufacturer}"~')
-    if active_ingredient:
-        search_terms.append(f'active_ingredients.name:"{active_ingredient}"~')
-    if ndc:
-        search_terms.append(f'product_ndc:"{ndc}"~')
+    # Direct FDA API URL with clean, properly formatted search parameters
+    # This matches the successful approach from the PillQ application
     
-    if not search_terms:
+    search_parts = []
+    
+    if name:
+        # This format works reliably with the FDA API - matching PillQ's approach
+        search_parts.append(f"(brand_name:{name}+generic_name:{name})")
+    if manufacturer:
+        search_parts.append(f"openfda.manufacturer_name:{manufacturer}")
+    if active_ingredient:
+        search_parts.append(f"active_ingredients.name:{active_ingredient}")
+    if ndc:
+        search_parts.append(f"product_ndc:{ndc}")
+    
+    if not search_parts:
         raise HTTPException(status_code=400, detail="At least one search parameter is required")
     
-    search_query = " AND ".join(search_terms)
+    search_string = "+AND+".join(search_parts)
     
-    # FDA API URL with search parameters
-    url = f"https://api.fda.gov/drug/ndc.json?search=({search_query})&limit={limit}&skip={skip}"
+    # FDA API URL with properly formatted search parameters
+    url = f"https://api.fda.gov/drug/ndc.json?search={search_string}&limit={limit}&skip={skip}"
+    
+    logger.info(f"Querying FDA API with URL: {url}")
     
     try:
         logger.info(f"Making FDA API request to: {url}")

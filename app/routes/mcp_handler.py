@@ -117,6 +117,32 @@ async def list_resources(request: Request):
                 )
             ),
             
+            # FDA Drug Label Data
+            Resource(
+                uri="fda/label/data",
+                name="FDA Drug Label Data",
+                description="Retrieve specific sections from FDA drug labels including indications, active ingredients, warnings, etc.",
+                function=FunctionDef(
+                    name="get_drug_label_data",
+                    description="Retrieve specific sections from FDA drug labels",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Brand or generic drug name"
+                            },
+                            "fields": {
+                                "type": "string",
+                                "description": "Comma-separated list of label fields to retrieve (e.g., 'indications_and_usage,warnings,active_ingredient'). If not specified, returns all available fields.",
+                                "default": ""
+                            }
+                        },
+                        "required": ["name"]
+                    }
+                )
+            ),
+            
             # Enhanced NDC Lookup
             Resource(
                 uri="pharmacy/ndc_lookup",
@@ -449,6 +475,12 @@ async def execute_resource(request: Request, uri: str):
             # Import here to avoid circular import
             from app.routes.fda.ndc_routes import search_ndc_compact
             result = await search_ndc_compact(**arguments)
+            return {"result": result}
+            
+        elif uri == "fda/label/data":
+            # Import here to avoid circular import
+            from app.routes.fda.label_routes import search_label_data
+            result = await search_label_data(**arguments)
             return {"result": result}
             
         elif uri == "fda/drug_lookup":
