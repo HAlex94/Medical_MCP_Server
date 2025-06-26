@@ -9,6 +9,12 @@ from pydantic import BaseModel
 import logging
 
 from app.utils.api_clients import make_request
+from app.utils.api_cache import CACHE_ENABLED
+
+# Emergency override for Render deployment
+# Force disable any caching or file system access
+RENDER_ENV = os.environ.get("RENDER", "false").lower() == "true"
+EMERGENCY_UNCACHED = RENDER_ENV or os.environ.get("EMERGENCY_UNCACHED", "false").lower() == "true"
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -91,7 +97,20 @@ async def search_label_data(
             logger.info("No FDA API key found, proceeding with unauthenticated request")
         
         logger.info(f"Searching FDA label database for: {name}")
-        result = await make_request(url, params=params)
+        
+        # On Render, directly make the request without using the cached version
+        # This is to bypass any file system access that might cause permission errors
+        if EMERGENCY_UNCACHED:
+            logger.info("EMERGENCY_UNCACHED mode: Direct API request without caching")
+            # Import httpx directly to make the request
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                result = response.json()
+        else:
+            # Use normal cached request method
+            result = await make_request(url, params=params)
         
         if not result or "results" not in result or not result["results"]:
             logger.warning(f"No label data found with primary search, trying fallback search for: {name}")
@@ -107,9 +126,18 @@ async def search_label_data(
             # Include API key if available
             if api_key:
                 fallback_params["api_key"] = api_key
-                
-            logger.info(f"Attempting fallback search with substance name for: {name}")
-            result = await make_request(url, params=fallback_params)
+            
+            # Use the same emergency bypass for fallback search
+            if EMERGENCY_UNCACHED:
+                logger.info("EMERGENCY_UNCACHED mode: Direct API request for fallback search without caching")
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(url, params=fallback_params)
+                    response.raise_for_status()
+                    result = response.json()
+            else:
+                # Use normal cached request method
+                result = await make_request(url, params=fallback_params)
             
             if not result or "results" not in result or not result["results"]:
                 logger.warning(f"No label data found for drug after fallback search: {name}")
