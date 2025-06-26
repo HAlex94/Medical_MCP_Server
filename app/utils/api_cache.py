@@ -16,8 +16,17 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 # Default cache settings
-DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
+# Use /tmp for cloud environments like Render where app directories may not be writable
+# Check if we're in a cloud environment first (Render sets this)
+if os.environ.get("RENDER", False):
+    DEFAULT_CACHE_DIR = "/tmp/medical_mcp_cache"
+else:
+    DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
+    
 DEFAULT_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days in seconds
+
+# Allow disabling cache entirely
+CACHE_ENABLED = os.environ.get("ENABLE_API_CACHE", "true").lower() == "true"
 
 # Memory cache for frequently accessed items
 _memory_cache = {}
@@ -89,6 +98,10 @@ class ApiCache:
         Returns:
             Cached response or None if not found or expired
         """
+        # If caching is disabled, always return None
+        if not CACHE_ENABLED:
+            return None
+            
         cache_key = self._get_cache_key(endpoint, params)
         
         # Try memory cache first
@@ -100,25 +113,28 @@ class ApiCache:
                 return data
         
         # Try file cache
-        cache_path = self._get_cache_path(cache_key)
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'r') as f:
-                    cache_entry = json.load(f)
-                
-                # Check expiration
-                timestamp = cache_entry.get('timestamp', 0)
-                if time.time() - timestamp < self.ttl_seconds:
-                    logger.debug(f"Cache hit (disk): {endpoint}")
+        try:
+            cache_path = self._get_cache_path(cache_key)
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, 'r') as f:
+                        cache_entry = json.load(f)
                     
-                    # Update memory cache
-                    _memory_cache[cache_key] = (cache_entry['data'], timestamp)
-                    
-                    return cache_entry['data']
-                else:
-                    logger.debug(f"Cache expired: {endpoint}")
-            except Exception as e:
-                logger.warning(f"Error reading cache file: {e}")
+                    # Check expiration
+                    timestamp = cache_entry.get('timestamp', 0)
+                    if time.time() - timestamp < self.ttl_seconds:
+                        logger.debug(f"Cache hit (disk): {endpoint}")
+                        
+                        # Update memory cache
+                        _memory_cache[cache_key] = (cache_entry['data'], timestamp)
+                        
+                        return cache_entry['data']
+                    else:
+                        logger.debug(f"Cache expired: {endpoint}")
+                except Exception as e:
+                    logger.warning(f"Error reading cache file: {e}")
+        except Exception as e:
+            logger.warning(f"Cache access error: {e}")
         
         return None
     
@@ -131,26 +147,35 @@ class ApiCache:
             params: Query parameters
             data: API response data to cache
         """
+        # If caching is disabled, do nothing
+        if not CACHE_ENABLED:
+            return
+            
         cache_key = self._get_cache_key(endpoint, params)
         timestamp = time.time()
         
         # Update memory cache
         _memory_cache[cache_key] = (data, timestamp)
         
-        # Update disk cache
-        cache_path = self._get_cache_path(cache_key)
+        # Update file cache
         try:
+            # Ensure cache directory exists (might have been deleted or not created in cloud environments)
+            os.makedirs(self.cache_dir, exist_ok=True)
+            
+            cache_path = self._get_cache_path(cache_key)
             cache_entry = {
                 'timestamp': timestamp,
                 'data': data,
                 'endpoint': endpoint,
                 'params': params
             }
+            
             with open(cache_path, 'w') as f:
                 json.dump(cache_entry, f)
-            logger.debug(f"Cache updated: {endpoint}")
+            logger.debug(f"Cached response for: {endpoint}")
         except Exception as e:
-            logger.warning(f"Error writing cache file: {e}")
+            logger.warning(f"Cache write error (continuing without caching): {e}")
+            # Just continue without caching - this ensures the API still works even if caching fails
     
     def clear(self, endpoint: Optional[str] = None, older_than_days: Optional[int] = None) -> int:
         """
