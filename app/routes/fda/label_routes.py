@@ -78,8 +78,8 @@ async def search_label_data(
         # This handles edge cases and variations in drug names
         normalized_name = name.strip().lower()
         
-        # Use the verified working FDA API format with spaces instead of + symbols
-        search_query = f"openfda.brand_name:{normalized_name} OR openfda.generic_name:{normalized_name}"
+        # Use exact syntax matching and double quotes like in PillQ implementation
+        search_query = f'openfda.brand_name.exact:"{normalized_name}" OR openfda.generic_name.exact:"{normalized_name}"'
         
         # FDA API endpoint for drug label search
         url = f"https://api.fda.gov/drug/label.json"
@@ -116,9 +116,9 @@ async def search_label_data(
         if not result or "results" not in result or not result["results"]:
             logger.warning(f"No label data found with primary search, trying fallback search for: {name}")
             
-            # Try a fallback search with just the active substance name
+            # Try a fallback search with substance name using exact matching and double quotes
             # This is useful for generic drugs that may be listed under different names
-            fallback_query = f"openfda.substance_name:{normalized_name}"
+            fallback_query = f'openfda.substance_name.exact:"{normalized_name}"'
             fallback_params = {
                 "search": fallback_query,
                 "limit": 1
@@ -163,10 +163,17 @@ async def search_label_data(
         # Add each requested field if available
         for field_name in field_names_to_include:
             if field_name in label_data:
+                # Ensure values is always a list, even if FDA API returns a single string
+                field_value = label_data[field_name]
+                if isinstance(field_value, str):
+                    field_value = [field_value]
+                elif not isinstance(field_value, list):
+                    field_value = [str(field_value)]
+                
                 response_fields.append(
                     LabelDataField(
                         field_name=field_name,
-                        values=label_data[field_name]
+                        values=field_value
                     )
                 )
         
