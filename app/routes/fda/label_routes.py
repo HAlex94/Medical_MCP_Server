@@ -78,8 +78,8 @@ async def search_label_data(
         # This handles edge cases and variations in drug names
         normalized_name = name.strip().lower()
         
-        # Use the verified working FDA API query format
-        search_query = f"openfda.brand_name:{normalized_name}+OR+openfda.generic_name:{normalized_name}"
+        # Use the verified working FDA API format with spaces instead of + symbols
+        search_query = f"openfda.brand_name:{normalized_name} OR openfda.generic_name:{normalized_name}"
         
         # FDA API endpoint for drug label search
         url = f"https://api.fda.gov/drug/label.json"
