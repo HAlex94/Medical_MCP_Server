@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 import uvicorn
 from app.routes import mcp_handler
+from app.routes.fda import ndc_routes
 from fastapi.responses import JSONResponse
 
 # Setup logging
@@ -49,6 +50,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include MCP routes
 app.include_router(mcp_handler.router, prefix="")
+
+# Include FDA routes
+app.include_router(ndc_routes.router, prefix="")
 
 @app.get("/")
 async def root():

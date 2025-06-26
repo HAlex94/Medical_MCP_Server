@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.routes.tools import pubmed, fda, trials
 from app.routes.tools.pharmacy import ndc, rxnorm, evidence, formulary, fhir
 from app.prompt_templates import pharmacy as pharmacy_templates
+from app.resources.fda_drug_resources import FDA_DRUG_RESOURCES
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -47,6 +48,49 @@ async def list_resources(request: Request):
         
         # Collect all available resources from tool modules
         resources = [
+            # Optimized FDA Drug Resources with pagination
+            Resource(
+                uri="fda/drug/search",
+                name="FDA Drug Products Search",
+                description="Search for medication products with compact results and pagination to avoid size limitations",
+                function=FunctionDef(
+                    name="search_drug_products",
+                    description="Search for drug products by name, manufacturer, active ingredient, or NDC",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Brand or generic name of the drug (e.g., apixaban, Eliquis)"
+                            },
+                            "manufacturer": {
+                                "type": "string",
+                                "description": "Name of the manufacturer (e.g., Bristol Myers Squibb)"
+                            },
+                            "active_ingredient": {
+                                "type": "string",
+                                "description": "Active ingredient in the drug (e.g., apixaban)"
+                            },
+                            "ndc": {
+                                "type": "string",
+                                "description": "National Drug Code"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return (use lower values to avoid ResponseTooLargeError)",
+                                "default": 10
+                            },
+                            "skip": {
+                                "type": "integer",
+                                "description": "Number of results to skip for pagination",
+                                "default": 0
+                            }
+                        }
+                    }
+                )
+            ),
+            
+            # Original FDA Drug Resources
             # FDA Drug Information
             Resource(
                 uri="fda/drug_lookup",
