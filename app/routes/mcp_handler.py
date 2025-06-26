@@ -458,7 +458,7 @@ async def get_resource(request: Request, uri: str):
             media_type="application/json"
         )
 
-@router.post("/resources/{uri}/execute")
+@router.post("/resources/{uri:path}/execute")
 async def execute_resource(request: Request, uri: str):
     """
     Execute a resource function with the provided arguments.
