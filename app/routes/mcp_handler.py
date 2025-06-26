@@ -189,7 +189,7 @@ async def list_resources(request: Request):
                             "source_vocabulary": {
                                 "type": "string",
                                 "description": "Source vocabulary type (rxnorm, ndc, gpi, etc.)",
-                                "enum": ["rxnorm", "ndc", "gpi", "atc", "snomed", "mesh", "icd10", null]
+                                "enum": ["rxnorm", "ndc", "gpi", "atc", "snomed", "mesh", "icd10", None]
                             }
                         },
                         "required": ["medication_name"]
