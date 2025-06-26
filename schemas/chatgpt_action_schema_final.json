@@ -1,0 +1,250 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FDA Drug Information API",
+    "description": "API for retrieving FDA drug label and NDC information",
+    "version": "1.0.1"
+  },
+  "servers": [
+    {
+      "url": "https://medical-mcp-server.onrender.com",
+      "description": "Medical MCP Server on Render"
+    }
+  ],
+  "paths": {
+    "/fda/label/search": {
+      "get": {
+        "operationId": "searchDrugLabel",
+        "summary": "Get drug label information by name",
+        "description": "Retrieves FDA drug label information including indications, usage, contraindications and more. NOT recommended for NDC data.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Drug name to search for (e.g., apixaban, metformin, lisinopril)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "description": "Specific fields to include (e.g., indications_and_usage, dosage_and_administration, warnings)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with drug label information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["drug_name", "fields"],
+                  "properties": {
+                    "drug_name": {
+                      "type": "string",
+                      "description": "Name of the drug that was searched for"
+                    },
+                    "fields": {
+                      "type": "array",
+                      "description": "Array of field data containing names and corresponding values",
+                      "items": {
+                        "type": "object",
+                        "required": ["field_name", "values"],
+                        "properties": {
+                          "field_name": {
+                            "type": "string",
+                            "description": "Name of the drug label field"
+                          },
+                          "values": {
+                            "type": "array",
+                            "description": "Array of text values for this field",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "openfda_data": {
+                      "type": "object",
+                      "description": "Additional OpenFDA metadata about the drug",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - Invalid input parameters"
+          },
+          "404": {
+            "description": "Drug not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/fda/ndc/compact_search": {
+      "get": {
+        "operationId": "searchNDCCompact",
+        "summary": "Search FDA NDC directory for drug products",
+        "description": "Retrieves detailed NDC (National Drug Code) information for drugs. RECOMMENDED endpoint for NDC data.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Brand or generic name of the drug (e.g., warfarin, lipitor)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "manufacturer",
+            "in": "query",
+            "description": "Name of the manufacturer",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "active_ingredient",
+            "in": "query",
+            "description": "Active ingredient in the drug",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ndc",
+            "in": "query",
+            "description": "Specific NDC code to search for",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of results to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "description": "Number of results to skip for pagination",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with NDC product information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["total_results", "displayed_results", "products"],
+                  "properties": {
+                    "total_results": {
+                      "type": "integer",
+                      "description": "Total number of results found"
+                    },
+                    "displayed_results": {
+                      "type": "integer",
+                      "description": "Number of results included in this response"
+                    },
+                    "products": {
+                      "type": "array",
+                      "description": "List of drug products with NDC information",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "product_ndc": {
+                            "type": "string",
+                            "description": "NDC product code"
+                          },
+                          "brand_name": {
+                            "type": "string",
+                            "description": "Brand name of the drug"
+                          },
+                          "generic_name": {
+                            "type": "string",
+                            "description": "Generic name of the drug"
+                          },
+                          "dosage_form": {
+                            "type": "string",
+                            "description": "Dosage form (e.g., tablet, injection)"
+                          },
+                          "route": {
+                            "type": "string",
+                            "description": "Administration route (e.g., oral, intravenous)"
+                          },
+                          "marketing_status": {
+                            "type": "string",
+                            "description": "Marketing status of the drug"
+                          },
+                          "active_ingredients": {
+                            "type": "array",
+                            "description": "List of active ingredients with their strength",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "description": "Name of the active ingredient"
+                                },
+                                "strength": {
+                                  "type": "string",
+                                  "description": "Strength of the ingredient"
+                                }
+                              }
+                            }
+                          },
+                          "manufacturer_name": {
+                            "type": "string",
+                            "description": "Name of the manufacturer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - Invalid input parameters"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    }
+  }
+}
