@@ -12,6 +12,249 @@
     }
   ],
   "paths": {
+    "/fda/label-info": {
+    "get": {
+      "operationId": "getDrugLabelInfo",
+      "summary": "Get comprehensive drug label information",
+      "description": "Retrieve detailed drug label sections including indications, warnings, contraindications, and more. Uses intelligent fallback queries for reliable results. Recommended for accessing label text sections.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Brand name of the drug (e.g., Lipitor, Prozac)",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "ndc",
+          "in": "query",
+          "description": "NDC code of the drug (e.g., 0071-0156)",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "active_ingredient",
+          "in": "query",
+          "description": "Active ingredient of the drug (e.g., atorvastatin, fluoxetine)",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with drug label information",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "brand_name": {
+                    "type": "string",
+                    "description": "Brand name of the drug"
+                  },
+                  "generic_name": {
+                    "type": "string",
+                    "description": "Generic name of the drug"
+                  },
+                  "manufacturer": {
+                    "type": "string",
+                    "description": "Manufacturer of the drug"
+                  },
+                  "ndc": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "NDC codes associated with this drug"
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "description": "Name of the label section"
+                        },
+                        "content": {
+                          "type": "string",
+                          "description": "Full text content of the label section"
+                        }
+                      }
+                    },
+                    "description": "Drug label sections including indications, warnings, etc."
+                  },
+                  "dosage_forms": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Available dosage forms"
+                  },
+                  "route": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Routes of administration"
+                  },
+                  "application_numbers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "FDA application numbers"
+                  },
+                  "message": {
+                    "type": "string",
+                    "description": "Additional information about the response"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad request - missing required parameters"
+        },
+        "404": {
+          "description": "No drug label information found matching the search criteria"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
+  "/fda/therapeutic-equivalence": {
+      "get": {
+        "operationId": "getDrugEquivalence",
+        "summary": "Get therapeutic equivalence information for drugs",
+        "description": "Retrieve comprehensive therapeutic equivalence data including AB ratings and equivalent products in a single call. This is the recommended endpoint for checking if drugs are therapeutically equivalent.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Brand name of the drug (e.g., Lipitor, Prozac)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ndc",
+            "in": "query",
+            "description": "NDC code of the drug (e.g., 0071-0156)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "active_ingredient",
+            "in": "query",
+            "description": "Active ingredient of the drug (e.g., atorvastatin, fluoxetine)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with therapeutic equivalence data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brand_name": {
+                      "type": "string",
+                      "description": "Brand name of the reference drug"
+                    },
+                    "active_ingredient": {
+                      "type": "string",
+                      "description": "Active ingredient of the drug"
+                    },
+                    "ndc": {
+                      "type": "string",
+                      "description": "NDC code of the reference drug"
+                    },
+                    "te_codes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Therapeutic equivalence codes (e.g., AB, AA)"
+                    },
+                    "reference_drug": {
+                      "type": "boolean",
+                      "description": "Whether this is a reference drug"
+                    },
+                    "equivalent_products": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "brand_name": {
+                            "type": "string",
+                            "description": "Brand name of the equivalent product"
+                          },
+                          "manufacturer": {
+                            "type": "string",
+                            "description": "Manufacturer of the equivalent product"
+                          },
+                          "ndc": {
+                            "type": "string",
+                            "description": "NDC code of the equivalent product"
+                          },
+                          "te_code": {
+                            "type": "string",
+                            "description": "Therapeutic equivalence code of the product"
+                          },
+                          "dosage_form": {
+                            "type": "string",
+                            "description": "Dosage form of the product (e.g., TABLET, CAPSULE)"
+                          },
+                          "strength": {
+                            "type": "string",
+                            "description": "Strength of the product (e.g., 10MG)"
+                          },
+                          "reference_drug": {
+                            "type": "boolean",
+                            "description": "Whether this product is a reference drug"
+                          }
+                        }
+                      },
+                      "description": "List of therapeutically equivalent products"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Additional information about the response"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - missing required parameters"
+          },
+          "404": {
+            "description": "No drug found matching the search criteria"
+          },
+          "500": {
+            "description": "Server error processing the request"
+          }
+        }
+      }
+    },
     "/fda/label/search": {
       "get": {
         "operationId": "searchDrugLabel",
@@ -268,6 +511,299 @@
           "500": {
             "description": "Internal server error"
           }
+        }
+      }
+    }
+  },
+  "/fda/orange-book/search": {
+    "get": {
+      "operationId": "searchOrangeBook",
+      "summary": "Search FDA Orange Book for drug products",
+      "description": "Search the FDA Orange Book to find drug products and their therapeutic equivalence ratings (AB ratings).",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Drug name (brand or generic)",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "active_ingredient",
+          "in": "query",
+          "description": "Active ingredient name",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "appl_no",
+          "in": "query",
+          "description": "FDA application number",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "ndc",
+          "in": "query",
+          "description": "NDC product code",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum number of results to return",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 10
+          }
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "description": "Number of results to skip for pagination",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 0
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with Orange Book products",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "The search query used"
+                  },
+                  "total_results": {
+                    "type": "integer",
+                    "description": "Total number of matching results"
+                  },
+                  "displayed_results": {
+                    "type": "integer",
+                    "description": "Number of results in this response"
+                  },
+                  "products": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "appl_no": {
+                          "type": "string",
+                          "description": "FDA application number"
+                        },
+                        "product_no": {
+                          "type": "string",
+                          "description": "FDA product number"
+                        },
+                        "form": {
+                          "type": "string",
+                          "description": "Dosage form"
+                        },
+                        "strength": {
+                          "type": "string",
+                          "description": "Product strength"
+                        },
+                        "reference_drug": {
+                          "type": "boolean",
+                          "description": "Whether this is a reference listed drug"
+                        },
+                        "drug_name": {
+                          "type": "string",
+                          "description": "Drug name (brand or generic)"
+                        },
+                        "active_ingredient": {
+                          "type": "string",
+                          "description": "Active ingredient(s)"
+                        },
+                        "reference_standard": {
+                          "type": "boolean",
+                          "description": "Whether this is an FDA reference standard"
+                        },
+                        "te_code": {
+                          "type": "string",
+                          "description": "Therapeutic equivalence code (e.g., AB, AB1, etc.)"
+                        },
+                        "applicant": {
+                          "type": "string",
+                          "description": "Company that applied for FDA approval"
+                        },
+                        "approval_date": {
+                          "type": "string",
+                          "description": "Date of FDA approval"
+                        },
+                        "product_id": {
+                          "type": "string",
+                          "description": "FDA product ID (often related to NDC)"
+                        },
+                        "market_status": {
+                          "type": "string",
+                          "description": "Marketing status (e.g., Prescription)"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad request - Invalid input parameters"
+        },
+        "404": {
+          "description": "No matching products found"
+        },
+        "500": {
+          "description": "Internal server error"
+        }
+      }
+    }
+  },
+  "/fda/orange-book/equivalent-products": {
+    "get": {
+      "operationId": "findTherapeuticEquivalents",
+      "summary": "Find therapeutically equivalent products",
+      "description": "Find all therapeutically equivalent products (generics/brands) for a given drug NDC. Shows AB ratings and equivalence codes.",
+      "parameters": [
+        {
+          "name": "ndc",
+          "in": "query",
+          "description": "NDC product code to find equivalents for",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum number of equivalent products to return",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 20
+          }
+        },
+        {
+          "name": "skip",
+          "in": "query",
+          "description": "Number of results to skip for pagination",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 0
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with therapeutically equivalent products",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "Description of the equivalence search"
+                  },
+                  "total_results": {
+                    "type": "integer",
+                    "description": "Total number of equivalent products"
+                  },
+                  "displayed_results": {
+                    "type": "integer",
+                    "description": "Number of products in this response"
+                  },
+                  "products": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "appl_no": {
+                          "type": "string",
+                          "description": "FDA application number"
+                        },
+                        "product_no": {
+                          "type": "string",
+                          "description": "FDA product number"
+                        },
+                        "form": {
+                          "type": "string",
+                          "description": "Dosage form"
+                        },
+                        "strength": {
+                          "type": "string",
+                          "description": "Product strength"
+                        },
+                        "reference_drug": {
+                          "type": "boolean",
+                          "description": "Whether this is a reference listed drug"
+                        },
+                        "drug_name": {
+                          "type": "string",
+                          "description": "Drug name (brand or generic)"
+                        },
+                        "active_ingredient": {
+                          "type": "string",
+                          "description": "Active ingredient(s)"
+                        },
+                        "reference_standard": {
+                          "type": "boolean",
+                          "description": "Whether this is an FDA reference standard"
+                        },
+                        "te_code": {
+                          "type": "string",
+                          "description": "Therapeutic equivalence code (AB rating)"
+                        },
+                        "applicant": {
+                          "type": "string",
+                          "description": "Company that applied for FDA approval"
+                        },
+                        "approval_date": {
+                          "type": "string",
+                          "description": "Date of FDA approval"
+                        },
+                        "product_id": {
+                          "type": "string",
+                          "description": "FDA product ID (often related to NDC)"
+                        },
+                        "market_status": {
+                          "type": "string",
+                          "description": "Marketing status (e.g., Prescription)"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad request - Invalid input parameters"
+        },
+        "404": {
+          "description": "Reference product not found"
+        },
+        "500": {
+          "description": "Internal server error"
         }
       }
     }
