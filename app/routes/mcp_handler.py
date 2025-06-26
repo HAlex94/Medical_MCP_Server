@@ -43,8 +43,8 @@ async def list_resources(request: Request):
     This endpoint follows the MCP protocol for resource discovery.
     """
     try:
-        body = await request.json()
-        cursor = body.get("cursor", "")
+        # For GET requests, get cursor from query parameters instead of body
+        cursor = request.query_params.get("cursor", "")
         
         # Collect all available resources from tool modules
         resources = [
