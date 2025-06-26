@@ -409,20 +409,20 @@ async def list_resources(request: Request):
             media_type="application/json"
         )
 
-@router.post("/resources/get")
-async def get_resource(request: Request):
+@router.post("/resources/{uri}")
+async def get_resource(request: Request, uri: str):
     """
     Get detailed information about a specific resource.
     
     This endpoint follows the MCP protocol for resource information retrieval.
     """
     try:
-        body = await request.json()
-        uri = body.get("uri", "")
+        # URI is now passed as a path parameter
+        logger.info(f"Getting resource details for URI: {uri}")
         
-        # Here we would return details about a specific resource
-        # For now, we'll return a placeholder
-        return {"message": f"Resource details for {uri} - Not yet implemented"}
+        # Now we look for the resource in our list of resources
+        # For now, we'll return a placeholder with the URI
+        return {"uri": uri, "name": f"Resource {uri}", "description": f"Details for {uri}"}
     except Exception as e:
         logger.error(f"Error in get_resource: {e}")
         return Response(
@@ -431,8 +431,8 @@ async def get_resource(request: Request):
             media_type="application/json"
         )
 
-@router.post("/resources/execute")
-async def execute_resource(request: Request):
+@router.post("/resources/{uri}/execute")
+async def execute_resource(request: Request, uri: str):
     """
     Execute a resource function with the provided arguments.
     
@@ -440,13 +440,18 @@ async def execute_resource(request: Request):
     """
     try:
         body = await request.json()
-        uri = body.get("uri", "")
         arguments = body.get("arguments", {})
         
         logger.info(f"Executing resource: {uri} with arguments: {arguments}")
         
         # Route the request to the appropriate handler based on URI
-        if uri == "fda/drug_lookup":
+        if uri == "fda/drug/search":
+            # Import here to avoid circular import
+            from app.routes.fda.ndc_routes import search_ndc_compact
+            result = await search_ndc_compact(**arguments)
+            return {"result": result}
+            
+        elif uri == "fda/drug_lookup":
             result = await fda.search_medication(**arguments)
             return {"result": result}
             

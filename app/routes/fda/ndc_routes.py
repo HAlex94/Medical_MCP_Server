@@ -3,7 +3,11 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import httpx
 import asyncio
+import logging
 from app.utils.api_clients import make_api_request
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/fda", tags=["FDA"])
 
@@ -53,13 +57,30 @@ async def search_ndc_compact(
     url = f"https://api.fda.gov/drug/ndc.json?search=({search_query})&limit={limit}&skip={skip}"
     
     try:
+        logger.info(f"Making FDA API request to: {url}")
+        
+        # For FDA APIs, we sometimes need to use a direct API key
+        # Try first with FDA_API_KEY if available in env
+        try:
+            import os
+            api_key = os.environ.get('FDA_API_KEY')
+            if api_key:
+                # Add API key to URL if available
+                url = f"{url}&api_key={api_key}"
+                logger.info("Using FDA API key from environment")
+        except Exception as e:
+            logger.warning(f"Error getting FDA API key: {str(e)}")
+        
         response = await make_api_request(url)
+        logger.info(f"Got FDA API response with keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
         
         # Extract only the most important fields for each product
         products = []
         
         if "results" in response:
             total = response.get("meta", {}).get("results", {}).get("total", 0)
+            logger.info(f"Found {total} total results, processing {len(response['results'])} products")
+            
             for product in response["results"]:
                 compact_product = {
                     "product_ndc": product.get("product_ndc"),
@@ -77,15 +98,18 @@ async def search_ndc_compact(
                 }
                 products.append(compact_product)
             
+            logger.info(f"Successfully processed {len(products)} products")
             return NDCSummaryResponse(
                 total_results=total,
                 displayed_results=len(products),
                 products=products
             )
         else:
+            logger.warning(f"No results found in FDA API response. Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
             return NDCSummaryResponse(total_results=0, displayed_results=0, products=[])
     
     except Exception as e:
+        logger.error(f"Error retrieving NDC data: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Error retrieving NDC data: {str(e)}"
