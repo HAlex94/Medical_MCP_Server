@@ -33,14 +33,16 @@ class LabelDataResponse(BaseModel):
 @router.get("/label/search", response_model=LabelDataResponse)
 async def search_label_data(
     name: str = Query(..., description="Drug name (brand or generic)"),
-    fields: Optional[str] = Query(None, description="Comma-separated list of label fields to return. If not specified, returns all available fields.")
+    fields: Optional[str] = Query(None, description="Comma-separated list of label fields to return. If not specified, returns all available fields."),
+    ndc: Optional[str] = Query(None, description="NDC code (product or package level) to improve search accuracy")
 ):
     """
-    Retrieve detailed label data for a drug by name.
+    Retrieve detailed label data for a drug by name or NDC code.
     
     Parameters:
     - name: Drug name to search for (brand or generic name)
     - fields: Optional comma-separated list of specific fields to include (e.g., indications_and_usage,warnings,active_ingredient)
+    - ndc: Optional NDC code (product or package level) to improve search accuracy
     
     Returns:
     - Label data for the drug with requested fields
@@ -74,12 +76,24 @@ async def search_label_data(
                 logger.info(f"Error checking directory {test_dir}: {e}")
         
         # Format the search query to match FDA API requirements
-        # Make the search more robust by normalizing the drug name and using a more flexible search
-        # This handles edge cases and variations in drug names
-        normalized_name = name.strip().lower()
+        # Prioritizing search by NDC when available as it's more reliable for retrieving label data
         
-        # Use exact syntax matching and double quotes like in PillQ implementation
-        search_query = f'openfda.brand_name.exact:"{normalized_name}" OR openfda.generic_name.exact:"{normalized_name}"'
+        # If NDC is provided, use it as the primary search criterion
+        if ndc:
+            # Clean the NDC code
+            clean_ndc = ndc.strip()
+            
+            # First try the most reliable search method: by product_ndc.exact
+            # This typically gives the most complete label data including indications
+            search_query = f'openfda.product_ndc.exact:"{clean_ndc}"'
+            logger.info(f"Searching by product NDC: {clean_ndc}")
+        else:
+            # If no NDC, fall back to name-based search
+            normalized_name = name.strip().lower()
+            
+            # Use exact syntax matching and double quotes like in PillQ implementation
+            search_query = f'openfda.brand_name.exact:"{normalized_name}" OR openfda.generic_name.exact:"{normalized_name}"'
+            logger.info(f"Searching by drug name: {normalized_name}")
         
         # FDA API endpoint for drug label search
         url = f"https://api.fda.gov/drug/label.json"
@@ -114,35 +128,62 @@ async def search_label_data(
             result = await make_request(url, params=params)
         
         if not result or "results" not in result or not result["results"]:
-            logger.warning(f"No label data found with primary search, trying fallback search for: {name}")
+            logger.warning(f"No label data found with primary search, trying fallback searches")
+            
+            fallback_searches = []
+            
+            # If we have an NDC but the primary search failed, try searching by package_ndc
+            # This is needed because some drugs have label data linked to package NDCs instead of product NDCs
+            if ndc:
+                fallback_searches.append((f'openfda.package_ndc.exact:"{ndc.strip()}"', f"package NDC: {ndc}"))
             
             # Try a fallback search with substance name using exact matching and double quotes
             # This is useful for generic drugs that may be listed under different names
-            fallback_query = f'openfda.substance_name.exact:"{normalized_name}"'
-            fallback_params = {
-                "search": fallback_query,
-                "limit": 1
-            }
+            fallback_searches.append((f'openfda.substance_name.exact:"{name.strip().lower()}"', f"substance name: {name}"))
             
-            # Include API key if available
-            if api_key:
-                fallback_params["api_key"] = api_key
+            # Add a fallback for the case when the drug name might be in the drug_name field
+            fallback_searches.append((f'drug_name:{name.strip().lower()}', f"drug_name: {name}"))
             
-            # Use the same emergency bypass for fallback search
-            if EMERGENCY_UNCACHED:
-                logger.info("EMERGENCY_UNCACHED mode: Direct API request for fallback search without caching")
-                import httpx
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(url, params=fallback_params)
-                    response.raise_for_status()
-                    result = response.json()
-            else:
-                # Use normal cached request method
-                result = await make_request(url, params=fallback_params)
+            # Try each fallback search in sequence until we get results
+            found = False
             
-            if not result or "results" not in result or not result["results"]:
-                logger.warning(f"No label data found for drug after fallback search: {name}")
-                raise HTTPException(status_code=404, detail=f"No label data found for drug: {name}. Please check the drug name and try again.")
+            for search_query, search_desc in fallback_searches:
+                logger.info(f"Trying fallback search with {search_desc}")
+                
+                fallback_params = {
+                    "search": search_query,
+                    "limit": 1
+                }
+                
+                # Add API key if available
+                if api_key:
+                    fallback_params["api_key"] = api_key
+                
+                # Retry with fallback search query
+                try:
+                    if EMERGENCY_UNCACHED:
+                        logger.info("EMERGENCY_UNCACHED mode: Direct fallback API request without caching")
+                        import httpx
+                        async with httpx.AsyncClient() as client:
+                            response = await client.get(url, params=fallback_params)
+                            response.raise_for_status()
+                            result = response.json()
+                    else:
+                        result = await make_request(url, params=fallback_params)
+                    
+                    # Check if this fallback search found results
+                    if result and "results" in result and result["results"]:
+                        logger.info(f"Successfully found data with fallback search using {search_desc}")
+                        found = True
+                        break
+                    
+                except Exception as e:
+                    logger.warning(f"Error with fallback search using {search_desc}: {str(e)}")
+                    continue
+            
+            if not found:
+                logger.warning(f"No label data found after all fallback searches. Returning error.")
+                raise HTTPException(status_code=404, detail=f"No FDA label data found for the specified drug: {name}. Please check the drug name and try again.")
         
         # Get the first result (most relevant)
         label_data = result["results"][0]
