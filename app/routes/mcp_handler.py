@@ -44,7 +44,8 @@ async def list_resources(request: Request):
     """
     try:
         # For GET requests, get cursor from query parameters instead of body
-        cursor = request.query_params.get("cursor", "") or ""
+        # Simply use default empty string if cursor is not present
+        cursor = request.query_params.get("cursor", "")
         
         # Collect all available resources from tool modules
         resources = [
