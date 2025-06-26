@@ -267,3 +267,8 @@ def calculate_retry_delay(attempt: int, base_delay: float = 1.0, jitter: float =
     delay += random.uniform(-jitter_amount, jitter_amount)
     
     return max(0.1, delay)  # Ensure minimum delay
+
+
+# Function alias to maintain compatibility with existing code
+# This ensures the ndc_routes.py file which imports make_api_request still works
+make_api_request = make_request
