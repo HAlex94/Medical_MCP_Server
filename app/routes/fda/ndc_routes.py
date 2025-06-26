@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any
 import httpx
 import asyncio
 import logging
+import os
 from app.utils.api_clients import make_api_request
 
 # Setup logging
@@ -77,7 +78,15 @@ async def search_ndc_compact(
         except Exception as e:
             logger.warning(f"Error getting FDA API key: {str(e)}")
         
-        response = await make_api_request(url)
+        # Special handling for Render deployment - bypass caching
+        use_cache = True
+        
+        # Check if running on Render or emergency uncached mode requested
+        if os.environ.get('RENDER') or os.environ.get('EMERGENCY_UNCACHED'):
+            logger.warning("Running on Render or emergency mode - bypassing cache to avoid permission issues")
+            use_cache = False
+        
+        response = await make_api_request(url, use_cache=use_cache)
         logger.info(f"Got FDA API response with keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
         
         # Extract only the most important fields for each product
