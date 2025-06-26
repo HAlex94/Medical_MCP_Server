@@ -35,7 +35,7 @@ class MCPError(BaseModel):
     code: str = "internal_error"
 
 # MCP Protocol Endpoints
-@router.post("/resources/list")
+@router.get("/resources")
 async def list_resources(request: Request):
     """
     List available medical data resources to be used as tools by ChatGPT.
