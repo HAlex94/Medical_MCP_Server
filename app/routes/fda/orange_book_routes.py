@@ -44,6 +44,10 @@ class OrangeBookResponse(BaseModel):
     total_results: int
     displayed_results: int
     products: List[TherapeuticEquivalenceData] = []
+    search_strategy: Optional[str] = None  # Which strategy found the results
+    strategies_attempted: List[str] = []   # All strategies that were attempted
+    available_fields: List[str] = []       # Available fields in the products
+    metadata: Dict[str, Any] = {}          # Additional metadata about the search
 
 @router.get("/orange-book/search", response_model=OrangeBookResponse)
 async def search_orange_book(
@@ -126,6 +130,12 @@ async def search_orange_book(
         result = None
         used_query = None
         used_field = None
+        strategies_attempted = []
+        
+        # Track search rate limiting and errors
+        rate_limited = False
+        search_errors = []
+        
         for query, field in search_orders:
             url = "https://api.fda.gov/drug/drugsfda.json"
             params = {
@@ -137,7 +147,11 @@ async def search_orange_book(
             api_key = get_api_key("FDA_API_KEY")
             if api_key:
                 params["api_key"] = api_key
+            
+            # Track strategy attempts for transparency
+            strategies_attempted.append(field)
             logger.info(f"Trying Orange Book search with {field}: {query}")
+            
             try:
                 if EMERGENCY_UNCACHED:
                     import httpx
@@ -147,6 +161,7 @@ async def search_orange_book(
                         result = response.json()
                 else:
                     result = await make_request(url, params=params)
+                
                 if result and "results" in result and result["results"]:
                     used_query = query
                     used_field = field
@@ -155,17 +170,46 @@ async def search_orange_book(
                 else:
                     logger.debug(f"No results for {field} strategy")
                     continue
+                    
             except Exception as e:
+                error_msg = str(e)
+                search_errors.append(f"{field}: {error_msg}")
+                if "429" in error_msg or "rate limit" in error_msg.lower():
+                    rate_limited = True
                 logger.warning(f"FDA Orange Book search failed for {field}: {e}")
                 continue
 
         if not result or "results" not in result or not result["results"]:
             logger.warning(f"No Orange Book data found for any search strategy")
+            
+            # Create a descriptive message with helpful information
+            message = f"No results for {name or ''} {active_ingredient or ''} {ndc or ''}"
+            if rate_limited:
+                message += ". API rate limits may have been reached. Consider adding an FDA_API_KEY for higher limits."
+                
+            # Detect if we tried all strategies without success
+            if len(strategies_attempted) > 0:
+                message += f" ({len(strategies_attempted)} search strategies attempted)"
+                
+            # Return structured response even when no results found
             return OrangeBookResponse(
-                query=f"No results for {name or ''} {active_ingredient or ''} {ndc or ''}",
+                query=message,
                 total_results=0,
                 displayed_results=0,
-                products=[]
+                products=[],
+                search_strategy="none",
+                strategies_attempted=strategies_attempted,
+                available_fields=["ndc", "name", "active_ingredient", "appl_no", "te_code"],
+                metadata={
+                    "errors": search_errors,
+                    "rate_limited": rate_limited,
+                    "search_parameters": {
+                        "name": name,
+                        "active_ingredient": active_ingredient,
+                        "ndc": ndc,
+                        "appl_no": appl_no
+                    }
+                }
             )
         
         # Process the response data
@@ -248,11 +292,34 @@ async def search_orange_book(
         
         logger.info(f"Found {len(products)} products in the Orange Book for {search_description}")
         
+        # Determine available fields from the products
+        available_fields = set()
+        if products:
+            # Extract field names from the first product
+            sample_product = products[0].dict()
+            available_fields = set([k for k, v in sample_product.items() if v is not None])
+            available_fields = sorted(list(available_fields))
+        
+        # Return the enhanced results with metadata
         return OrangeBookResponse(
             query=search_description,
-            total_results=total_results,
+            total_results=len(products),
             displayed_results=len(products),
-            products=products
+            products=products,
+            search_strategy=used_field,
+            strategies_attempted=strategies_attempted,
+            available_fields=available_fields,
+            metadata={
+                "successful_query": used_query,
+                "errors": search_errors,
+                "rate_limited": rate_limited,
+                "search_parameters": {
+                    "name": name,
+                    "active_ingredient": active_ingredient,
+                    "ndc": ndc,
+                    "appl_no": appl_no
+                }
+            }
         )
     
     except HTTPException as http_ex:
@@ -270,6 +337,8 @@ async def search_orange_book(
 @router.get("/orange-book/equivalent-products", response_model=OrangeBookResponse)
 async def find_therapeutic_equivalents(
     ndc: str = Query(..., description="NDC product code to find equivalents for"),
+    te_code: Optional[str] = Query(None, description="Filter by specific TE code (e.g., 'AB', 'AB1')"),
+    fields: Optional[str] = Query(None, description="Comma-separated fields to include in response"),
     limit: int = Query(20, description="Maximum number of equivalent products to return"),
     skip: int = Query(0, description="Number of results to skip for pagination"),
 ):
@@ -352,11 +421,30 @@ async def find_therapeutic_equivalents(
         
         if not result or "results" not in result or not result["results"]:
             logger.warning(f"No equivalent products found for {reference.drug_name}")
+            strategies_attempted = ["reference_product_search"]
+            
+            if te_code:
+                strategies_attempted.append(f"te_code_filter:{te_code}")
+            
             return OrangeBookResponse(
                 query=f"Therapeutic equivalents for {reference.drug_name} (NDC: {ndc})",
                 total_results=0,
                 displayed_results=0,
-                products=[]
+                products=[],
+                search_strategy="active_ingredient_and_form_search",
+                strategies_attempted=strategies_attempted,
+                available_fields=["ndc", "name", "active_ingredient", "form", "strength", "te_code"],
+                metadata={
+                    "reference_product": {
+                        "ndc": ndc,
+                        "name": reference.drug_name,
+                        "active_ingredient": reference.active_ingredient,
+                        "form": reference.form,
+                        "strength": reference.strength
+                    },
+                    "te_code_filter": te_code,
+                    "message": "No equivalent products found that match the criteria"
+                }
             )
         
         # Process the response data similar to search_orange_book
@@ -430,15 +518,56 @@ async def find_therapeutic_equivalents(
             if prod.get("product_id") != ndc
         ]
         
-        total_results = len(equivalents)
+        # Apply TE code filtering if specified
+        strategies_attempted = ["reference_product_search"]
+        filtered_equivalents = equivalents
+        if te_code:
+            te_code = te_code.upper()  # Normalize for case-insensitive comparison
+            filtered_equivalents = [
+                product for product in equivalents
+                if product.get("te_code") and product.get("te_code").startswith(te_code)
+            ]
+            strategies_attempted.append(f"te_code_filter:{te_code}")
+            logger.info(f"Filtered to {len(filtered_equivalents)} products with TE code {te_code}")
+        
+        # Field selection logic
+        selected_fields = None
+        if fields:
+            selected_fields = [f.strip().lower() for f in fields.split(",") if f.strip()]
+            strategies_attempted.append(f"field_selection:{','.join(selected_fields)}")
+            logger.info(f"Selected fields: {selected_fields}")
+        
+        # Get available fields from the products for response metadata
+        available_fields = []
+        if filtered_equivalents:
+            # Extract field names from the first product
+            sample_product = filtered_equivalents[0]
+            available_fields = sorted([k for k, v in sample_product.items() if v is not None])
+        
+        total_results = len(filtered_equivalents)
         
         logger.info(f"Found {total_results} therapeutic equivalents for {reference.drug_name} (NDC: {ndc})")
         
+        # Enhanced response with metadata
         return OrangeBookResponse(
             query=f"Therapeutic equivalents for {reference.drug_name} (NDC: {ndc})",
             total_results=total_results,
-            displayed_results=len(equivalents),
-            products=equivalents
+            displayed_results=len(filtered_equivalents),
+            products=filtered_equivalents,
+            search_strategy="active_ingredient_and_form_search",
+            strategies_attempted=strategies_attempted,
+            available_fields=available_fields,
+            metadata={
+                "reference_product": {
+                    "ndc": ndc,
+                    "name": reference.drug_name,
+                    "active_ingredient": reference.active_ingredient,
+                    "form": reference.form,
+                    "strength": reference.strength
+                },
+                "te_code_filter": te_code,
+                "selected_fields": selected_fields
+            }
         )
     
     except HTTPException as http_ex:
