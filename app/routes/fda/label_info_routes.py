@@ -382,6 +382,51 @@ IMPORTANT_LABEL_SECTIONS = [
     "pediatric_use", "geriatric_use", "overdosage", "how_supplied", "storage_and_handling"
 ]
 
+# Field aliases to handle common variations in field names
+FIELD_ALIASES = {
+    # Boxed warning variations
+    "black_box_warning": "boxed_warning",
+    "black_box": "boxed_warning",
+    "warnings_boxed": "boxed_warning",
+    "boxed_warnings": "boxed_warning",
+    "black_box_warnings": "boxed_warning",
+    
+    # Indications variations
+    "indications": "indications_and_usage",
+    "usage": "indications_and_usage",
+    
+    # Warnings variations
+    "warning": "warnings",
+    "warning_and_precautions": "warnings_and_precautions",
+    "precautions_and_warnings": "warnings_and_precautions",
+    
+    # Dosage variations
+    "dosage": "dosage_and_administration",
+    "dose": "dosage_and_administration",
+    "administration": "dosage_and_administration",
+    
+    # Adverse reactions variations
+    "side_effects": "adverse_reactions", 
+    "adverse_effects": "adverse_reactions",
+    
+    # Drug interactions variations
+    "interactions": "drug_interactions",
+    
+    # Special populations variations
+    "special_populations": "use_in_specific_populations",
+    "specific_populations": "use_in_specific_populations",
+    
+    # Clinical pharmacology variations
+    "pharmacology": "clinical_pharmacology",
+    
+    # Pregnancy variations
+    "pregnancy_category": "pregnancy",
+    
+    # How supplied variations
+    "supplied": "how_supplied",
+    "supply": "how_supplied"
+}
+
 def extract_all_sections(label: Dict) -> List[LabelSection]:
     """
     Extract all important label sections present in the label data.
@@ -595,6 +640,9 @@ class LLMLabelDiscoverResponse(BaseModel):
     drug_name: str
     fields: List[FieldResult] = []
     message: Optional[str] = None
+    all_ndcs_tried: List[str] = []
+    available_fields: List[str] = []
+    search_strategies_used: List[str] = []
 
 @router.get("/label/llm-discover", response_model=LLMLabelDiscoverResponse)
 async def llm_label_discover(
@@ -625,11 +673,29 @@ async def llm_label_discover(
     
     # Parse requested fields or use all important ones if none specified
     requested_fields = []
+    available_fields = []
+    
     if fields:
-        requested_fields = [f.strip().lower().replace(" ", "_") for f in fields.split(",") if f.strip()]
+        # Check for special 'ALL' request
+        if fields.upper() == 'ALL':
+            requested_fields = IMPORTANT_LABEL_SECTIONS
+        else:
+            # Process each field and apply aliases
+            raw_fields = [f.strip().lower().replace(" ", "_") for f in fields.split(",") if f.strip()]
+            
+            for field in raw_fields:
+                # Check if it's an alias and normalize
+                if field in FIELD_ALIASES:
+                    requested_fields.append(FIELD_ALIASES[field])
+                else:
+                    requested_fields.append(field)
     
     if not requested_fields:
         requested_fields = IMPORTANT_LABEL_SECTIONS
+        
+    # List of all available FDA label fields for reference
+    available_fields = list(set(IMPORTANT_LABEL_SECTIONS + list(FIELD_ALIASES.values())))
+    available_fields.sort()
     
     # Track global information about the search
     all_ndcs_tried = set()
@@ -698,7 +764,47 @@ async def llm_label_discover(
                 except Exception as e:
                     logger.warning(f"Error checking field {field} for NDC {candidate_ndc}: {str(e)}")
             
-            # If field not found in any NDC, try last-ditch _exists_ search
+            # If field not found in any NDC, try substance name fallback
+            if not field_result.found and name:
+                try:
+                    logger.info(f"Trying substance/generic name fallback search for field '{field}'")
+                    
+                    # Try by active ingredient/substance name
+                    query = f'_exists_:{field} AND openfda.substance_name:"{name.upper()}"'
+                    encoded_query = urllib.parse.quote_plus(query)
+                    url = f"https://api.fda.gov/drug/label.json?search={encoded_query}&limit=1"
+                    
+                    # Add API key if available
+                    api_key = get_api_key("FDA_API_KEY")
+                    if api_key:
+                        url += f"&api_key={api_key}"
+                    
+                    result = await make_request(url)
+                    
+                    if result and "results" in result and result["results"]:
+                        label = result["results"][0]
+                        if field in label and label[field]:
+                            field_result.found = True
+                            content = label[field]
+                            if isinstance(content, list):
+                                content = " ".join(content)
+                            field_result.content = content
+                            field_result.search_strategy = f"Substance name search: {name}"
+                            
+                            # Extract NDC if available
+                            if "openfda" in label and "product_ndc" in label["openfda"] and label["openfda"]["product_ndc"]:
+                                field_result.ndc = label["openfda"]["product_ndc"][0]
+                                all_ndcs_tried.add(field_result.ndc)
+                                field_result.ndcs_tried.append(field_result.ndc)
+                            
+                            # Get all sections from this label
+                            field_result.all_sections = extract_all_sections(label)
+                            field_result.message = f"Found {field} using substance name search"
+                            break
+                except Exception as e:
+                    logger.warning(f"Substance name search failed for field {field}: {str(e)}")
+            
+            # If field still not found, try last-ditch _exists_ search
             if not field_result.found and last_ditch:
                 try:
                     logger.info(f"Trying last-ditch _exists_ search for field '{field}'")
@@ -755,15 +861,43 @@ async def llm_label_discover(
             # Add result for this field
             field_results.append(field_result)
         
-        # STEP 3: Build the final response
-        found_count = sum(1 for r in field_results if r.found)
-        message = f"Found {found_count} out of {len(requested_fields)} requested fields. Tried {len(all_ndcs_tried)} NDCs."
+        # Track search strategies used
+        search_strategies_used = list(set(result.search_strategy for result in field_results if result.search_strategy))
+        
+        # Convert all_ndcs_tried set to sorted list
+        all_ndcs_list = sorted(list(all_ndcs_tried))
+        
+        # Build the final response
+        found_count = sum(1 for result in field_results if result.found)
+        total_ndcs = len(all_ndcs_list)
+        
+        message = (
+            f"Found {found_count} out of {len(requested_fields)} requested fields. "
+            f"Tried {total_ndcs} NDCs across {len(search_strategies_used)} search strategies."
+        )
+        
+        # For rate limits, add a note if we had API errors
+        if any("error" in (result.message or "").lower() for result in field_results):
+            message += " Some searches hit rate limits or API errors. Consider adding an FDA_API_KEY for higher limits."
+        
+        drug_name = name if name else "Unknown drug"
+        if field_results and field_results[0].found and field_results[0].all_sections:
+            # Try to extract a better drug name from the found data if possible
+            for section in field_results[0].all_sections:
+                if section.metadata and "openfda" in section.metadata:
+                    openfda = section.metadata["openfda"]
+                    if "brand_name" in openfda and openfda["brand_name"]:
+                        drug_name = openfda["brand_name"][0]
+                        break
         
         return LLMLabelDiscoverResponse(
             success=found_count > 0,
             drug_name=drug_name,
             fields=field_results,
-            message=message
+            message=message,
+            all_ndcs_tried=all_ndcs_list,
+            available_fields=available_fields,
+            search_strategies_used=search_strategies_used
         )
     
     except HTTPException:
