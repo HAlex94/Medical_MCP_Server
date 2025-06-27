@@ -169,6 +169,9 @@ This project is configured for deployment on [Render](https://render.com/) using
     - `te_code`: Filter by specific therapeutic equivalence code (e.g., 'AB', 'AB1')
     - `group_by_te_code`: Group equivalent products by their TE code (boolean)
     - `fields`: Comma-separated fields to include in response
+    - `limit`: Maximum number of products to return (integer, default=50)
+    - `skip`: Number of products to skip for pagination (integer, default=0)
+    - `max_size`: Apply size restrictions to prevent context overflows (boolean, default=true)
   - **Features**:
     - Multi-strategy lookup (NDC → name → active ingredient)
     - Name normalization and suffix cleaning
@@ -258,6 +261,35 @@ response = await client.get("/fda/therapeutic-equivalence", params={
 if response.json().get("success") and response.json().get("grouped_by_te_code"):
     for te_code, products in response.json().get("grouped_by_te_code").items():
         print(f"TE Code {te_code}: {len(products)} products")
+```
+
+### 7. Manage Large Responses with Pagination and Size Optimization
+
+For drugs with many equivalent products, use pagination and field selection to avoid context overflows:
+
+```python
+# Request only specific fields and use pagination for large result sets
+response = await client.get("/fda/therapeutic-equivalence", params={
+    "name": "atorvastatin",  # Common drug with potentially many equivalents
+    "fields": "brand_name,ndc,te_code,manufacturer",  # Select only needed fields
+    "limit": 10,  # Get 10 results per page
+    "skip": 0,   # Start with first page
+    "max_size": True  # Apply size optimization
+})
+
+data = response.json()
+if data.get("success"):
+    # Check if there are more pages
+    pagination = data.get("metadata", {}).get("pagination", {})
+    total_pages = pagination.get("total_pages", 1)
+    current_page = pagination.get("page", 1)
+    total_count = pagination.get("total_count", 0)
+    
+    print(f"Showing page {current_page} of {total_pages} ({len(data.get('equivalent_products', []))} of {total_count} products)")
+    
+    # Get next page if needed
+    if current_page < total_pages:
+        print(f"More results available. Use skip={(current_page * pagination.get('limit', 10))} to get next page")
 ```
 
 ## LLM-Optimized API Design

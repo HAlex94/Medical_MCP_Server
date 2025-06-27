@@ -107,23 +107,41 @@ class EquivalentProduct(BaseModel):
 class TherapeuticEquivalenceResponse(BaseModel):
     """Response model for therapeutic equivalence data with enhanced LLM-friendly fields"""
     success: bool = True
-    brand_name: Optional[str] = None
-    active_ingredient: Optional[str] = None
-    ndc: Optional[str] = None
-    te_codes: List[str] = []
-    reference_drug: bool = False
-    reference_product: Optional[EquivalentProduct] = None
-    equivalent_products: List[EquivalentProduct] = []
-    # TE code grouping for easier LLM consumption
-    grouped_by_te_code: Optional[Dict[str, List[EquivalentProduct]]] = None
-    # Reference drug detection metadata
-    reference_drug_warning: Optional[str] = None
-    # Standard diagnostics
     message: Optional[str] = None
+    reference_product: Optional[Union[EquivalentProduct, Dict]] = None
+    equivalent_products: Optional[List[EquivalentProduct]] = []
+    grouped_by_te_code: Optional[Dict[str, List[EquivalentProduct]]] = None
+    reference_drug_warning: Optional[str] = None
     search_method: Optional[str] = None
-    search_attempts: Optional[List[str]] = []
+    search_attempts: Optional[List[str]] = None
     available_fields: Optional[List[str]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict] = None
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Found 3 therapeutically equivalent products for Lipitor (NDC: 00071-0155-23). Results paginated: showing 3 of 50 products (skipping 0).",
+                "equivalent_products": [{"brand_name": "ATORVASTATIN CALCIUM", "ndc": "00093-5126-05", "te_code": "AB"}],
+                "search_method": "ndc_lookup",
+                "search_attempts": ["ndc_lookup", "name_search", "te_code_filter:AB", "pagination applied: 0-3 of 50"],
+                "metadata": {
+                    "pagination": {
+                        "is_paginated": True,
+                        "total_count": 50,
+                        "limit": 3,
+                        "skip": 0,
+                        "page": 1,
+                        "total_pages": 17
+                    },
+                    "size_optimization": {
+                        "applied": True,
+                        "filtered_object_count": 3,
+                        "selected_fields": ["brand_name", "ndc", "te_code"]
+                    }
+                }
+            }
+        }
 
 async def find_reference_product(name=None, active_ingredient=None, ndc=None):
     """Find a reference product using different search strategies with enhanced fallback logic"""
@@ -470,7 +488,10 @@ async def get_therapeutic_equivalence(
     active_ingredient: Optional[str] = Query(None, description="Active ingredient to search for"),
     te_code: Optional[str] = Query(None, description="Filter by specific therapeutic equivalence code (e.g., 'AB', 'AB1')"),
     group_by_te_code: bool = Query(False, description="Group equivalent products by their TE code for easier analysis"),
-    fields: Optional[str] = Query(None, description="Comma-separated fields to include in response")
+    fields: Optional[str] = Query(None, description="Comma-separated fields to include in response"),
+    limit: int = Query(50, description="Maximum number of equivalent products to return"),
+    skip: int = Query(0, description="Number of products to skip for pagination"),
+    max_size: Optional[bool] = Query(True, description="Apply maximum size restrictions to prevent context overflows")
 ):
     """Get therapeutic equivalence information for a drug
     
@@ -582,13 +603,69 @@ async def get_therapeutic_equivalence(
             ]
             search_trail.append(f"TE code filtering: {te_code}")
             logger.info(f"Filtered to {len(filtered_products)} products with TE code {te_code}")
+            
+        # Apply pagination for large result sets
+        total_product_count = len(filtered_products)
+        is_paginated = False
+        pagination_warning = None
         
-        # Field selection logic
+        if total_product_count > limit:
+            is_paginated = True
+            pagination_warning = f"Results paginated: showing {limit} of {total_product_count} products (skipping {skip})"
+            end_idx = min(skip + limit, total_product_count)
+            
+            # Only return the requested page of results
+            if skip < total_product_count:
+                filtered_products = filtered_products[skip:end_idx]
+                search_trail.append(f"Pagination applied: {skip}-{end_idx} of {total_product_count}")
+                logger.info(f"Returning paginated results: {skip}-{end_idx} of {total_product_count}")
+            else:
+                filtered_products = []
+                search_trail.append(f"Pagination skip {skip} exceeds available products {total_product_count}")
+                logger.warning(f"Skip value {skip} exceeds total product count {total_product_count}")
+                pagination_warning = f"Skip value ({skip}) exceeds total product count ({total_product_count}). No results to show."
+        
+        # Field selection logic - for size optimization
         selected_fields = None
+        filtered_obj_count = 0
+        size_optimization_warning = None
+        
         if fields:
             selected_fields = [f.strip().lower() for f in fields.split(",") if f.strip()]
             search_trail.append(f"Field selection: {fields}")
             logger.info(f"Selected fields: {selected_fields}")
+            
+            # Apply field selection to equivalent products to reduce payload size
+            if max_size and filtered_products and selected_fields:
+                filtered_obj_count = len(filtered_products)
+                
+                # Create slimmed-down versions of each product with only requested fields
+                filtered_products_slim = []
+                for product in filtered_products:
+                    product_dict = product.dict()
+                    slim_dict = {}
+                    
+                    # Always include NDC and TE code for identification
+                    slim_dict["ndc"] = product_dict.get("ndc")
+                    slim_dict["te_code"] = product_dict.get("te_code")
+                    
+                    # Add only requested fields
+                    for field in selected_fields:
+                        if field in product_dict:
+                            slim_dict[field] = product_dict[field]
+                    
+                    # Convert back to EquivalentProduct
+                    filtered_products_slim.append(EquivalentProduct(**slim_dict))
+                
+                filtered_products = filtered_products_slim
+                size_optimization_warning = f"Applied field selection to reduce payload size. Only showing fields: {', '.join(selected_fields)}"
+                search_trail.append(f"Size optimization applied: Filtered {filtered_obj_count} objects to requested fields only")
+                logger.info(f"Applied field filtering for size optimization: {', '.join(selected_fields)}")
+        
+            # If no specific fields requested but max_size is enabled, warn for large results
+            elif max_size and len(filtered_products) > 100:
+                size_optimization_warning = f"Large result set ({len(filtered_products)} products). Consider using 'fields' parameter to reduce payload size."
+                search_trail.append("Size warning added for large result set")
         
         # Get available fields from the products for response metadata
         available_fields = []
@@ -621,33 +698,106 @@ async def get_therapeutic_equivalence(
             # Sort groups by code for consistent ordering
             grouped_products = {k: grouped_products[k] for k in sorted(grouped_products.keys())}
         
-        # Create response with consistent model fields and enhanced metadata
-        response = TherapeuticEquivalenceResponse(
-            success=True,
-            brand_name=reference_product.get('brand_name'),
-            active_ingredient=active_ingredient,
-            ndc=reference_product.get('ndc'),
-            te_codes=[reference_product.get('te_code')] if reference_product.get('te_code') else [],
-            reference_drug=reference_product.get('reference_drug', False),
-            reference_product=EquivalentProduct(**reference_product) if isinstance(reference_product, dict) else reference_product,
-            equivalent_products=filtered_products,
-            grouped_by_te_code=grouped_products,
-            reference_drug_warning=reference_drug_warning,
-            search_method=successful_strategy,
-            search_attempts=search_trail,
-            available_fields=available_fields,
-            metadata={
-                "reference_product": {
-                    "ndc": reference_product.get('ndc'),
-                    "name": reference_product.get('brand_name'),
-                    "active_ingredient": active_ingredient
-                },
-                "te_code_filter": te_code,
-                "selected_fields": selected_fields,
-                "total_equivalents": len(equivalent_products),
-                "filtered_equivalents": len(filtered_products)
-            }
-        )
+        # Construct response with or without grouping
+        if group_by_te_code and filtered_products:
+            response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) across {len(grouped_products)} TE code(s)"
+            if reference_product:
+                response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) across {len(grouped_products)} TE code(s) for {reference_product.name} (NDC: {reference_product.ndc})"
+            
+            # Add pagination warning if applicable
+            if pagination_warning:
+                response_msg += f". {pagination_warning}"
+            
+            # Add size optimization warning if applicable
+            if size_optimization_warning:
+                response_msg += f". {size_optimization_warning}"
+                
+            return TherapeuticEquivalenceResponse(
+                success=True,
+                reference_product=reference_product,
+                equivalent_products=filtered_products,
+                grouped_by_te_code=grouped_products,
+                reference_drug_warning=reference_drug_warning,
+                search_method=successful_strategy,
+                search_attempts=search_trail,
+                available_fields=available_fields,
+                message=response_msg,
+                metadata={
+                    "query_parameters": {
+                        "name": name,
+                        "ndc": ndc,
+                        "active_ingredient": active_ingredient,
+                        "te_code": te_code,
+                        "group_by_te_code": group_by_te_code,
+                        "fields": fields,
+                        "limit": limit,
+                        "skip": skip,
+                        "max_size": max_size
+                    },
+                    "pagination": {
+                        "is_paginated": is_paginated,
+                        "total_count": total_product_count,
+                        "limit": limit,
+                        "skip": skip,
+                        "page": (skip // limit) + 1 if limit > 0 else 1,
+                        "total_pages": ((total_product_count - 1) // limit) + 1 if limit > 0 else 1
+                    },
+                    "size_optimization": {
+                        "applied": max_size and filtered_obj_count > 0,
+                        "filtered_object_count": filtered_obj_count,
+                        "selected_fields": selected_fields
+                    }
+                }
+            )
+        else:
+            response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s)"
+            if reference_product:
+                response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) for {reference_product.name} (NDC: {reference_product.ndc})"
+            
+            # Add pagination warning if applicable
+            if pagination_warning:
+                response_msg += f". {pagination_warning}"
+            
+            # Add size optimization warning if applicable
+            if size_optimization_warning:
+                response_msg += f". {size_optimization_warning}"
+                
+            return TherapeuticEquivalenceResponse(
+                success=True,
+                reference_product=reference_product,
+                equivalent_products=filtered_products,
+                reference_drug_warning=reference_drug_warning,
+                search_method=successful_strategy,
+                search_attempts=search_trail,
+                available_fields=available_fields,
+                message=response_msg,
+                metadata={
+                    "query_parameters": {
+                        "name": name,
+                        "ndc": ndc,
+                        "active_ingredient": active_ingredient,
+                        "te_code": te_code,
+                        "group_by_te_code": group_by_te_code,
+                        "fields": fields,
+                        "limit": limit,
+                        "skip": skip,
+                        "max_size": max_size
+                    },
+                    "pagination": {
+                        "is_paginated": is_paginated,
+                        "total_count": total_product_count,
+                        "limit": limit,
+                        "skip": skip,
+                        "page": (skip // limit) + 1 if limit > 0 else 1,
+                        "total_pages": ((total_product_count - 1) // limit) + 1 if limit > 0 else 1
+                    },
+                    "size_optimization": {
+                        "applied": max_size and filtered_obj_count > 0,
+                        "filtered_object_count": filtered_obj_count,
+                        "selected_fields": selected_fields
+                    }
+                }
+            )
         
         # Add appropriate message based on filtering results
         if not equivalent_products:

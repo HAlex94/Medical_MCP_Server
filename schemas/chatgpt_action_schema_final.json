@@ -192,6 +192,36 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of equivalent products to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "description": "Number of products to skip for pagination",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          {
+            "name": "max_size",
+            "in": "query",
+            "description": "Apply maximum size restrictions to prevent context overflows",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
           }
         ],
         "responses": {
@@ -296,6 +326,44 @@
                     },
                     "metadata": {
                       "type": "object",
+                      "properties": {
+                        "query_parameters": {
+                          "type": "object",
+                          "properties": {
+                            "name": { "type": "string" },
+                            "ndc": { "type": "string" },
+                            "active_ingredient": { "type": "string" },
+                            "te_code": { "type": "string" },
+                            "group_by_te_code": { "type": "boolean" },
+                            "fields": { "type": "string" },
+                            "limit": { "type": "integer" },
+                            "skip": { "type": "integer" },
+                            "max_size": { "type": "boolean" }
+                          }
+                        },
+                        "pagination": {
+                          "type": "object",
+                          "properties": {
+                            "is_paginated": { "type": "boolean" },
+                            "total_count": { "type": "integer" },
+                            "limit": { "type": "integer" },
+                            "skip": { "type": "integer" },
+                            "page": { "type": "integer" },
+                            "total_pages": { "type": "integer" }
+                          }
+                        },
+                        "size_optimization": {
+                          "type": "object",
+                          "properties": {
+                            "applied": { "type": "boolean" },
+                            "filtered_object_count": { "type": "integer" },
+                            "selected_fields": {
+                              "type": "array",
+                              "items": { "type": "string" }
+                            }
+                          }
+                        }
+                      },
                       "additionalProperties": true,
                       "description": "Additional metadata about the query and results"
                     },
