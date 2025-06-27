@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, HTTPException
 import httpx
 import os
 import logging
+import re
 from pydantic import BaseModel
 from app.utils.api_clients import make_request
 from app.utils.api_clients import get_api_key
@@ -30,66 +31,216 @@ class EquivalentProduct(BaseModel):
 
 class TherapeuticEquivalenceResponse(BaseModel):
     """Response model for therapeutic equivalence data"""
+    success: bool = True
     brand_name: Optional[str] = None
     active_ingredient: Optional[str] = None
     ndc: Optional[str] = None
     te_codes: List[str] = []
     reference_drug: bool = False
+    reference_product: Optional[EquivalentProduct] = None
     equivalent_products: List[EquivalentProduct] = []
     message: Optional[str] = None
 
 async def find_reference_product(name=None, active_ingredient=None, ndc=None):
-    """Find a reference product using different search strategies"""
-    search_params = []
-    if name:
-        search_params.append(f"openfda.brand_name:\"{name}\"")
-    if active_ingredient:
-        search_params.append(f"openfda.generic_name:\"{active_ingredient}\"")
-    if ndc:
-        search_params.append(f"openfda.product_ndc:\"{ndc}\"")
+    """Find a reference product using different search strategies with enhanced fallback logic"""
+    # Build a comprehensive set of search strategies
+    search_strategies = []
     
-    # Try each search parameter individually for best results
+    # Strategy 1: If we have an NDC, that's the most specific identifier
+    if ndc:
+        # Clean up NDC format - some have dashes, FDA doesn't want them
+        clean_ndc = ndc.replace("-", "")
+        search_strategies.append((f"openfda.product_ndc:\"{clean_ndc}\"", "NDC product"))
+        search_strategies.append((f"products.product_ndc:\"{clean_ndc}\"", "NDC products"))
+        search_strategies.append((f"openfda.package_ndc:\"{clean_ndc}\"", "NDC package"))
+        search_strategies.append((f"_exists_:openfda.product_ndc AND {clean_ndc}", "NDC anywhere"))
+    
+    # Strategy 2: If we have a name, try with multiple case variants (FDA can be case-sensitive)
+    if name:
+        # Prepare name variants (FDA API can be case-sensitive)
+        name_up = name.upper()  # FDA often indexes in UPPERCASE
+        name_title = name.title()  # Sometimes title case works better
+        name_orig = name  # Original case as provided
+        
+        # Clean up common formatting issues
+        # Remove common suffixes like tabs, capsules, etc.
+        suffixes = [" tablets", " tabs", " tab", " capsules", " capsule", " injection", " oral", 
+                   " cream", " ointment", " solution", " powder", " tablet"]
+        
+        # Also clean up trailing numbers and dosages
+        clean_name_up = re.sub(r'\s+\d+\s*(?:mg|mcg|ml|g|%)?$', '', name_up)
+        clean_name_title = re.sub(r'\s+\d+\s*(?:mg|mcg|ml|g|%)?$', '', name_title)
+        clean_name_orig = re.sub(r'\s+\d+\s*(?:mg|mcg|ml|g|%)?$', '', name_orig)
+        
+        # Apply suffix removal if needed
+        for suffix in suffixes:
+            suffix_up = suffix.upper()
+            if clean_name_up.endswith(suffix_up):
+                clean_name_up = clean_name_up[:-len(suffix_up)].strip()
+            
+            suffix_title = suffix.title()
+            if clean_name_title.endswith(suffix_title):
+                clean_name_title = clean_name_title[:-len(suffix_title)].strip()
+                
+            if clean_name_orig.lower().endswith(suffix.lower()):
+                clean_name_orig = clean_name_orig[:-(len(suffix))].strip()
+        
+        # Try quotes removed (helps with names that have apostrophes)
+        quote_free_name = name.replace("'", "").replace("\"", "").strip()
+        
+        # Try UPPERCASE first (most FDA data is indexed as uppercase)
+        search_strategies.append((f"openfda.brand_name:\"{name_up}\"", "Brand UP"))
+        search_strategies.append((f"brand_name:\"{name_up}\"", "Direct brand UP"))
+        if clean_name_up != name_up:
+            search_strategies.append((f"openfda.brand_name:\"{clean_name_up}\"", "Brand clean UP"))
+        
+        # Try Title Case second
+        search_strategies.append((f"openfda.brand_name:\"{name_title}\"", "Brand Title"))
+        search_strategies.append((f"brand_name:\"{name_title}\"", "Direct brand Title"))
+        if clean_name_title != name_title:
+            search_strategies.append((f"openfda.brand_name:\"{clean_name_title}\"", "Brand clean Title"))
+        
+        # Try original case (lowest priority)
+        search_strategies.append((f"openfda.brand_name:\"{name_orig}\"", "Brand original"))
+        search_strategies.append((f"brand_name:\"{name_orig}\"", "Direct brand original"))
+        if clean_name_orig != name_orig:
+            search_strategies.append((f"openfda.brand_name:\"{clean_name_orig}\"", "Brand clean original"))
+            
+        # Try with quotes removed (helps with names that have apostrophes)
+        if quote_free_name != name:
+            search_strategies.append((f"openfda.brand_name:\"{quote_free_name}\"", "Brand quotes removed"))
+        
+        # Sometimes brand names are in the application data
+        search_strategies.append((f"application_docs.application_docs_list.submission_property_type:Established Name AND \"{name_up}\"", "App docs"))
+    
+    # Strategy 3: If we have active ingredient, try with multiple case variants
+    if active_ingredient:
+        # Prepare variants
+        ingredient_up = active_ingredient.upper()
+        ingredient_title = active_ingredient.title()
+        ingredient_orig = active_ingredient
+        
+        # Try UPPERCASE first
+        search_strategies.append((f"openfda.generic_name:\"{ingredient_up}\"", "Generic UP"))
+        search_strategies.append((f"openfda.substance_name:\"{ingredient_up}\"", "Substance UP"))
+        search_strategies.append((f"products.active_ingredients.name:\"{ingredient_up}\"", "Active ingredients UP"))
+        
+        # Try Title Case
+        search_strategies.append((f"openfda.generic_name:\"{ingredient_title}\"", "Generic Title"))
+        search_strategies.append((f"openfda.substance_name:\"{ingredient_title}\"", "Substance Title"))
+        
+        # Try original case
+        search_strategies.append((f"openfda.generic_name:\"{ingredient_orig}\"", "Generic original"))
+        search_strategies.append((f"openfda.substance_name:\"{ingredient_orig}\"", "Substance original"))
+        search_strategies.append((f"_exists_:active_ingredients AND \"{ingredient_orig}\"", "Active ingredients"))
+    
+    # Strategy 4: If name but no active ingredient, try name as active ingredient
+    # (sometimes brand names and active ingredients overlap)
+    if name and not active_ingredient:
+        search_strategies.append((f"openfda.generic_name:\"{name_up}\"", "Name as generic UP"))
+        search_strategies.append((f"openfda.substance_name:\"{name_up}\"", "Name as substance UP"))
+    
+    # Try each strategy until we find something
     reference_product = None
-    for search_query in search_params:
+    results_found = False
+    
+    for search_query, strategy_name in search_strategies:
         try:
-            url = f"https://api.fda.gov/drug/drugsfda.json?search={search_query}&limit=10"
+            logger.info(f"Trying {strategy_name} strategy with query: {search_query}")
+            url = f"https://api.fda.gov/drug/drugsfda.json?search={search_query}&limit=25"
             api_key = get_api_key("FDA_API_KEY")
             if api_key:
                 url += f"&api_key={api_key}"
-                
+            
             response = await make_request(url)
             
-            # Process results to find reference products
-            if response and "results" in response:
+            if response and "results" in response and response["results"]:
+                results_found = True
+                logger.info(f"Found {len(response['results'])} results using {strategy_name} strategy")
+                
+                # First pass: Look specifically for reference drugs
                 for product_data in response["results"]:
                     if "products" in product_data:
                         for product in product_data["products"]:
-                            # Look for reference drugs
-                            if product.get("reference_drug") == "Yes" or product.get("reference_standard") == "Yes":
-                                sponsor_name = product_data.get("sponsor_name", "Unknown")
+                            # Check all possible reference drug indicators
+                            is_reference = False
+                            reference_indicators = [
+                                product.get("reference_drug") == "Yes",
+                                product.get("reference_standard") == "Yes",
+                                product.get("reference_listed_drug") == "Yes",
+                                product.get("reference") == "Yes"
+                            ]
+                            
+                            if any(reference_indicators):
+                                is_reference = True
+                            
+                            # For brand name drugs with no reference indication but matching the search name,
+                            # also consider them reference products if they have a brand name
+                            if name and product.get("brand_name") and not is_reference:
+                                brand = product.get("brand_name", "")
+                                if brand and (name.upper() in brand.upper() or brand.upper() in name.upper()):
+                                    # Brand name match without explicit reference flag is still likely reference
+                                    is_reference = True
+                                    logger.info(f"Inferring reference status for brand match: {brand}")
+                            
+                            if is_reference:
                                 brand = product.get("brand_name", name)
+                                sponsor_name = product_data.get("sponsor_name", "Unknown")
                                 
+                                # Extract NDC from all possible locations
+                                ndc_value = None
+                                if "openfda" in product_data:
+                                    if "product_ndc" in product_data["openfda"]:
+                                        if isinstance(product_data["openfda"]["product_ndc"], list):
+                                            ndc_value = product_data["openfda"]["product_ndc"][0]
+                                        else:
+                                            ndc_value = product_data["openfda"]["product_ndc"]
+                                
+                                if not ndc_value and "product_ndc" in product:
+                                    ndc_value = product.get("product_ndc")
+                                    
                                 reference_product = {
                                     "brand_name": brand,
                                     "manufacturer": sponsor_name,
                                     "application_number": product_data.get("application_number"),
                                     "te_code": product.get("te_code"),
+                                    "ndc": ndc_value, 
                                     "reference_drug": True
                                 }
                                 
-                                # If we found a product that matches our search exactly, use it
-                                if (not name or name.lower() in brand.lower() or 
-                                    brand.lower() in name.lower()):
+                                # If this is an exact brand match, return immediately
+                                if name and (name.lower() == brand.lower()):
+                                    logger.info(f"Found exact reference match for {name}")
                                     return reference_product
-                    
-                # If we didn't find an exact match but have any reference product, use it
+                
+                # If we found any reference product, return it even if not exact match
                 if reference_product:
+                    logger.info(f"Found reference product (not exact): {reference_product['brand_name']}")
                     return reference_product
-                    
-                # If no reference product, just use the first product
-                if not reference_product and response["results"] and "products" in response["results"][0]:
+                
+                # Second pass: No explicit reference drug, assume the brand name product is reference
+                # when name is provided
+                if name:
+                    for product_data in response["results"]:
+                        if "products" in product_data:
+                            for product in product_data["products"]:
+                                brand = product.get("brand_name", "")
+                                if brand and name.lower() in brand.lower() or brand.lower() in name.lower():
+                                    sponsor_name = product_data.get("sponsor_name", "Unknown")
+                                    logger.info(f"Using brand name match as reference: {brand}")
+                                    return {
+                                        "brand_name": brand,
+                                        "manufacturer": sponsor_name,
+                                        "application_number": product_data.get("application_number"),
+                                        "te_code": product.get("te_code"),
+                                        "reference_drug": product.get("reference_drug") == "Yes"
+                                    }
+                
+                # Last resort: just use the first product found
+                if response["results"] and "products" in response["results"][0]:
                     product = response["results"][0]["products"][0]
                     sponsor_name = response["results"][0].get("sponsor_name", "Unknown")
+                    logger.info(f"Using first product as reference: {product.get('brand_name', 'Unknown')}")
                     return {
                         "brand_name": product.get("brand_name", name or "Unknown"),
                         "manufacturer": sponsor_name,
@@ -97,9 +248,13 @@ async def find_reference_product(name=None, active_ingredient=None, ndc=None):
                         "te_code": product.get("te_code"),
                         "reference_drug": product.get("reference_drug") == "Yes"
                     }
+        
         except Exception as e:
-            logger.error(f"Error finding reference product with query {search_query}: {str(e)}")
+            logger.error(f"Error with {strategy_name} strategy: {str(e)}")
             continue
+    
+    if not results_found:
+        logger.warning(f"No results found for drug: name={name}, ingredient={active_ingredient}, ndc={ndc}")
     
     return None
 
@@ -109,120 +264,213 @@ async def find_equivalent_products(reference_product, active_ingredient=None):
         return []
         
     equivalent_products = []
+    search_queries = []
     
-    # Try to find by active ingredient first (most reliable)
+    # Try multiple search strategies with different case variants
     if active_ingredient:
-        search_query = f"openfda.generic_name:\"{active_ingredient}\""
-    else:
-        # If no active ingredient specified, try to infer from brand name
-        search_query = f"openfda.brand_name:\"{reference_product['brand_name']}\""
-    
-    try:
-        url = f"https://api.fda.gov/drug/drugsfda.json?search={search_query}&limit=100"
-        api_key = get_api_key("FDA_API_KEY")
-        if api_key:
-            url += f"&api_key={api_key}"
-            
-        response = await make_request(url)
+        # Prepare case variants for active ingredient
+        ingredients = [
+            active_ingredient.upper(),  # FDA often indexes in UPPERCASE
+            active_ingredient.title(),  # Sometimes title case works better
+            active_ingredient  # Original case as provided
+        ]
         
-        if response and "results" in response:
-            for product_data in response["results"]:
-                if "products" in product_data:
-                    sponsor_name = product_data.get("sponsor_name", "Unknown")
-                    for product in product_data["products"]:
-                        # Skip if it's the reference product
-                        if (product.get("brand_name") == reference_product.get("brand_name") and
-                            product_data.get("application_number") == reference_product.get("application_number")):
-                            continue
-                            
-                        # Only include products with therapeutic equivalence codes
-                        if product.get("te_code"):
-                            # Extract strength and dosage form
-                            strength = None
-                            if "active_ingredients" in product and product["active_ingredients"]:
-                                if isinstance(product["active_ingredients"], list):
-                                    strength = product["active_ingredients"][0].get("strength")
-                                else:
-                                    strength = product["active_ingredients"].get("strength")
+        for ingredient in ingredients:
+            search_queries.append((f"openfda.generic_name:\"{ingredient}\"", f"Generic {ingredient}"))
+            search_queries.append((f"openfda.substance_name:\"{ingredient}\"", f"Substance {ingredient}"))
+    
+    # Also try finding by brand name with different case variants
+    if reference_product and 'brand_name' in reference_product and reference_product['brand_name']:
+        brand_variants = [
+            reference_product['brand_name'].upper(),
+            reference_product['brand_name'].title(),
+            reference_product['brand_name']
+        ]
+        
+        for brand in brand_variants:
+            search_queries.append((f"openfda.brand_name:\"{brand}\"", f"Brand {brand}"))
+    
+    # Try all search queries until we find results
+    results_found = False
+    
+    for search_query, strategy_name in search_queries:
+        if results_found:
+            break
+            
+        try:
+            logger.info(f"Finding equivalents with {strategy_name}: {search_query}")
+            url = f"https://api.fda.gov/drug/drugsfda.json?search={search_query}&limit=100"
+            api_key = get_api_key("FDA_API_KEY")
+            if api_key:
+                url += f"&api_key={api_key}"
+                
+            response = await make_request(url)
+            
+            if response and "results" in response and len(response["results"]) > 0:
+                results_found = True
+                logger.info(f"Found {len(response['results'])} results using {strategy_name}")
+                
+                for product_data in response["results"]:
+                    if "products" in product_data:
+                        sponsor_name = product_data.get("sponsor_name", "Unknown")
+                        for product in product_data["products"]:
+                            # Skip if it's the reference product
+                            if (product.get("brand_name") == reference_product.get("brand_name") and
+                                product_data.get("application_number") == reference_product.get("application_number")):
+                                continue
+                                
+                            # Only include products with therapeutic equivalence codes
+                            if product.get("te_code"):
+                                # Extract strength and dosage form
+                                strength = None
+                                if "active_ingredients" in product and product["active_ingredients"]:
+                                    if isinstance(product["active_ingredients"], list):
+                                        strength = product["active_ingredients"][0].get("strength")
+                                    else:
+                                        strength = product["active_ingredients"].get("strength")
+                                        
+                                if not strength:
+                                    strength = product.get("strength")
                                     
-                            if not strength:
-                                strength = product.get("strength")
+                                # Get dosage form
+                                dosage_form = None
+                                if isinstance(product.get("dosage_form"), dict):
+                                    dosage_form = product["dosage_form"].get("form")
+                                else:
+                                    dosage_form = product.get("dosage_form")
+                                    
+                                # Enhanced NDC extraction from all possible locations
+                                ndc = None
+                                # Check in product's openfda section
+                                if "openfda" in product_data:
+                                    if "product_ndc" in product_data["openfda"]:
+                                        if isinstance(product_data["openfda"]["product_ndc"], list) and product_data["openfda"]["product_ndc"]:
+                                            ndc = product_data["openfda"]["product_ndc"][0]
+                                        elif isinstance(product_data["openfda"]["product_ndc"], str):
+                                            ndc = product_data["openfda"]["product_ndc"]
+                                            
+                                    # Try package_ndc if product_ndc not available
+                                    if not ndc and "package_ndc" in product_data["openfda"]:
+                                        if isinstance(product_data["openfda"]["package_ndc"], list) and product_data["openfda"]["package_ndc"]:
+                                            ndc = product_data["openfda"]["package_ndc"][0]
+                                        elif isinstance(product_data["openfda"]["package_ndc"], str):
+                                            ndc = product_data["openfda"]["package_ndc"]
                                 
-                            # Get dosage form
-                            dosage_form = None
-                            if isinstance(product.get("dosage_form"), dict):
-                                dosage_form = product["dosage_form"].get("form")
-                            else:
-                                dosage_form = product.get("dosage_form")
+                                # Check in product itself if not found in openfda
+                                if not ndc and "product_ndc" in product:
+                                    ndc = product.get("product_ndc")
                                 
-                            # Get NDC if available
-                            ndc = None
-                            if "openfda" in product_data and "product_ndc" in product_data["openfda"]:
-                                if isinstance(product_data["openfda"]["product_ndc"], list):
-                                    ndc = product_data["openfda"]["product_ndc"][0]
-                            
-                            # Add to equivalent products
-                            equivalent_products.append(EquivalentProduct(
-                                brand_name=product.get("brand_name", "Generic"),
-                                manufacturer=sponsor_name,
-                                ndc=ndc,
-                                application_number=product_data.get("application_number"),
-                                te_code=product.get("te_code"),
-                                dosage_form=dosage_form,
-                                strength=strength,
-                                reference_drug=product.get("reference_drug") == "Yes"
-                            ))
-    except Exception as e:
-        logger.error(f"Error finding equivalent products: {str(e)}")
+                                # Add to equivalent products
+                                equivalent_products.append(EquivalentProduct(
+                                    brand_name=product.get("brand_name", "Generic"),
+                                    manufacturer=sponsor_name,
+                                    ndc=ndc,
+                                    application_number=product_data.get("application_number"),
+                                    te_code=product.get("te_code"),
+                                    dosage_form=dosage_form,
+                                    strength=strength,
+                                    reference_drug=(product.get("reference_drug") == "Yes" or 
+                                                  product.get("reference_standard") == "Yes" or
+                                                  product.get("reference_listed_drug") == "Yes")
+                                ))
+        except Exception as e:
+            logger.error(f"Error with {strategy_name} search: {str(e)}")
+            continue
     
     return equivalent_products
 
 @router.get("/therapeutic-equivalence", response_model=TherapeuticEquivalenceResponse)
 async def get_therapeutic_equivalence(
-    name: Optional[str] = Query(None, description="Brand name of the drug"),
-    ndc: Optional[str] = Query(None, description="NDC code of the drug"),
-    active_ingredient: Optional[str] = Query(None, description="Active ingredient of the drug")
+    name: Optional[str] = Query(None, description="Drug brand name to search for"),
+    ndc: Optional[str] = Query(None, description="NDC code to search for"),
+    active_ingredient: Optional[str] = Query(None, description="Active ingredient to search for")
 ):
+    """Get therapeutic equivalence information for a drug
+    
+    At least one of name, ndc, or active_ingredient must be provided.
     """
-    Get therapeutic equivalence data for a drug by name, NDC, or active ingredient.
-    Returns the reference drug and all therapeutically equivalent products.
-    """
-    if not name and not ndc and not active_ingredient:
-        raise HTTPException(status_code=400, detail="At least one search parameter (name, ndc, or active_ingredient) is required")
-        
+    if not any([name, ndc, active_ingredient]):
+        raise HTTPException(status_code=400, detail="At least one of name, ndc, or active_ingredient must be provided")
+    
     try:
-        # Step 1: Find a reference product
+        logger.info(f"Therapeutic equivalence request - name: '{name}', ndc: '{ndc}', active_ingredient: '{active_ingredient}'")
+        
+        # Clean up input parameters
+        if name:
+            name = name.strip()
+            # If name has generic notation like "Drug Name (active ingredient)", extract both parts
+            if '(' in name and ')' in name:
+                potential_active = name[name.find('(')+1:name.find(')')].strip()
+                if potential_active and not active_ingredient:
+                    active_ingredient = potential_active
+                    logger.info(f"Extracted active ingredient '{active_ingredient}' from name '{name}'")
+                name = name[:name.find('(')].strip()
+                logger.info(f"Extracted clean name: '{name}'")
+        
+        if ndc:
+            # Normalize NDC format (remove dashes if present)
+            ndc = ndc.replace("-", "")
+        
+        # First, find the reference product
         reference_product = await find_reference_product(name, active_ingredient, ndc)
         
-        # Step 2: Find equivalent products
-        equivalent_products = await find_equivalent_products(reference_product, active_ingredient)
+        if not reference_product:
+            # If we failed with the name but have active ingredient, try with just the active ingredient
+            if name and active_ingredient and not ndc:
+                logger.info(f"Retrying with only active ingredient: {active_ingredient}")
+                reference_product = await find_reference_product(None, active_ingredient, None)
             
-        # Step 3: Collect unique TE codes
-        te_codes = set()
-        if reference_product and reference_product.get("te_code"):
-            te_codes.add(reference_product["te_code"])
-            
-        for product in equivalent_products:
-            if product.te_code:
-                te_codes.add(product.te_code)
+            # If we still don't have a reference product, try to normalize the name
+            if not reference_product and name:
+                # Remove common suffixes like tabs, capsules, etc.
+                suffixes = [" tabs", " tab", " capsules", " capsule", " injection", " oral", 
+                           " cream", " ointment", " solution", " powder", " tablet"]
+                cleaned_name = name.lower()
+                for suffix in suffixes:
+                    if cleaned_name.endswith(suffix):
+                        cleaned_name = cleaned_name[:-len(suffix)].strip()
+                        break
+                
+                if cleaned_name != name.lower():
+                    logger.info(f"Trying with normalized name: {cleaned_name}")
+                    reference_product = await find_reference_product(cleaned_name, active_ingredient, ndc)
         
-        # Create the response
+        if not reference_product:
+            logger.warning("Could not find reference product after all attempts")
+            return TherapeuticEquivalenceResponse(
+                success=False,
+                message=f"Could not find reference product for {name or active_ingredient or ndc}",
+                reference_product=None,
+                equivalent_products=[]
+            )
+        
+        # If we found a reference product, extract its active ingredient if we don't already have one
+        if reference_product and not active_ingredient and "active_ingredients" in reference_product:
+            active_ingredient = reference_product["active_ingredients"]
+            logger.info(f"Using active ingredient from reference product: {active_ingredient}")
+            
+        # Then find therapeutically equivalent products
+        equivalent_products = await find_equivalent_products(reference_product, active_ingredient)
+        
+        # Create response with consistent model fields
         response = TherapeuticEquivalenceResponse(
-            brand_name=reference_product.get("brand_name") if reference_product else name,
+            success=True,
+            brand_name=reference_product.get('brand_name'),
             active_ingredient=active_ingredient,
-            ndc=ndc,
-            te_codes=list(te_codes),
-            reference_drug=reference_product.get("reference_drug", False) if reference_product else False,
+            ndc=reference_product.get('ndc'),
+            te_codes=[reference_product.get('te_code')] if reference_product.get('te_code') else [],
+            reference_drug=reference_product.get('reference_drug', False),
+            reference_product=EquivalentProduct(**reference_product) if isinstance(reference_product, dict) else reference_product,
             equivalent_products=equivalent_products
         )
         
-        # Add message if no products found
+        # Add appropriate message
         if not equivalent_products:
-            if reference_product:
-                response.message = "Found reference drug but no therapeutically equivalent products"
-            else:
-                response.message = "No reference drug or equivalent products found"
+            response.message = "Found reference drug but no therapeutically equivalent products"
+        else:
+            response.message = f"Found {len(equivalent_products)} therapeutically equivalent products"
         
+        logger.info(f"Found reference product: {reference_product['brand_name']} with {len(equivalent_products)} equivalent products")
         return response
     except Exception as e:
         logger.error(f"Error getting therapeutic equivalence: {str(e)}")

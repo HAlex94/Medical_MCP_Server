@@ -35,6 +35,8 @@ class TherapeuticEquivalenceData(BaseModel):
     approval_date: Optional[str] = None
     product_id: Optional[str] = None  # FDA Product ID
     market_status: Optional[str] = None  # e.g., "Prescription"
+    source_field: Optional[str] = None  # Which search field/strategy yielded the result
+    data_quality: Optional[str] = None  # Indicator if data is missing critical fields
 
 class OrangeBookResponse(BaseModel):
     """Response model for Orange Book data search"""
@@ -78,68 +80,89 @@ async def search_orange_book(
                 detail="At least one search parameter is required (name, active_ingredient, appl_no, or ndc)"
             )
         
-        # Construct the search query based on provided parameters
-        search_parts = []
-        search_description = ""
+        # --- Robust FDA Orange Book Fallback Search ---
+        # Create search description for logging and response
+        search_description = f"name={name} ingredient={active_ingredient} ndc={ndc}"
         
-        if name:
-            normalized_name = name.strip().lower()
-            # Primary field path that works reliably based on testing
-            search_parts.append(f'openfda.brand_name:"{normalized_name}"')
-            search_description = f"name: {normalized_name}"
-        
-        if active_ingredient:
-            normalized_ingredient = active_ingredient.strip().lower()
-            # Primary field path that works reliably based on testing
-            search_parts.append(f'openfda.generic_name:"{normalized_ingredient}"')
-            search_description = search_description or f"active ingredient: {normalized_ingredient}"
-        
-        if appl_no:
-            search_parts.append(f'appl_no:"{appl_no}"')
-            search_description = search_description or f"application number: {appl_no}"
-        
-        if ndc:
-            # Use openfda.product_ndc path based on testing
-            search_parts.append(f'openfda.product_ndc:"{ndc}"')
-            search_description = search_description or f"NDC: {ndc}"
-        
-        # Combine search parts with AND operator
-        search_query = "+AND+".join(search_parts)
-        
-        # FDA API endpoint for Orange Book
-        url = f"https://api.fda.gov/drug/drugsfda.json"
-        params = {
-            "search": search_query,
-            "limit": limit,
-            "skip": skip
-        }
-        
-        # Try to get the FDA API key if available
-        from app.utils.api_clients import get_api_key
-        api_key = get_api_key("FDA_API_KEY")
-        if api_key:
-            params["api_key"] = api_key
-            logger.info("Using FDA API key for Orange Book search")
-        
-        logger.info(f"Searching FDA Orange Book for {search_description}")
-        
-        # On Render, bypass caching to avoid permission issues
-        if EMERGENCY_UNCACHED:
-            logger.info("EMERGENCY_UNCACHED mode: Direct API request without caching")
-            # Import httpx directly to make the request
-            import httpx
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                result = response.json()
-        else:
-            # Use normal cached request method
-            result = await make_request(url, params=params)
-        
+        # Multiple case variants for better search robustness
+        name_up = name.upper() if name else None
+        name_title = name.title() if name else None
+        ingredient_up = active_ingredient.upper() if active_ingredient else None
+        ingredient_title = active_ingredient.title() if active_ingredient else None
+        ndc_clean = ndc.replace("-", "") if ndc else None
+
+        # Ordered search field strategies with multiple case variants
+        search_orders = [
+            # NDC searches - most reliable
+            (f'openfda.product_ndc:"{ndc_clean}"', "openfda.product_ndc") if ndc_clean else None,
+            (f'products.product_ndc:"{ndc_clean}"', "products.product_ndc") if ndc_clean else None,
+            
+            # UPPERCASE name searches (primary)
+            (f'openfda.brand_name:"{name_up}"', "openfda.brand_name.uppercase") if name_up else None,
+            (f'openfda.generic_name:"{name_up}"', "openfda.generic_name.uppercase") if name_up else None,
+            (f'products.brand_name:"{name_up}"', "products.brand_name.uppercase") if name_up else None,
+            
+            # UPPERCASE ingredient searches (primary)
+            (f'products.active_ingredients.name:"{ingredient_up}"', "products.active_ingredients.name.uppercase") if ingredient_up else None,
+            (f'openfda.substance_name:"{ingredient_up}"', "openfda.substance_name.uppercase") if ingredient_up else None,
+            (f'openfda.generic_name:"{ingredient_up}"', "openfda.generic_name.uppercase") if ingredient_up else None,
+            
+            # Title Case name searches (fallback)
+            (f'openfda.brand_name:"{name_title}"', "openfda.brand_name.titlecase") if name_title else None,
+            (f'openfda.generic_name:"{name_title}"', "openfda.generic_name.titlecase") if name_title else None,
+            (f'products.brand_name:"{name_title}"', "products.brand_name.titlecase") if name_title else None,
+            
+            # Title Case ingredient searches (fallback)
+            (f'products.active_ingredients.name:"{ingredient_title}"', "products.active_ingredients.name.titlecase") if ingredient_title else None,
+            (f'openfda.substance_name:"{ingredient_title}"', "openfda.substance_name.titlecase") if ingredient_title else None,
+            (f'openfda.generic_name:"{ingredient_title}"', "openfda.generic_name.titlecase") if ingredient_title else None,
+            
+            # First word only fallbacks (even more robust)
+            (f'openfda.brand_name:"{name_up.split()[0]}"', "openfda.brand_name.firstword") if name_up and ' ' in name_up else None,
+            (f'openfda.generic_name:"{ingredient_up.split()[0]}"', "openfda.generic_name.firstword") if ingredient_up and ' ' in ingredient_up else None,
+        ]
+        search_orders = [x for x in search_orders if x]
+
+        result = None
+        used_query = None
+        used_field = None
+        for query, field in search_orders:
+            url = "https://api.fda.gov/drug/drugsfda.json"
+            params = {
+                "search": query,
+                "limit": limit,
+                "skip": skip
+            }
+            from app.utils.api_clients import get_api_key
+            api_key = get_api_key("FDA_API_KEY")
+            if api_key:
+                params["api_key"] = api_key
+            logger.info(f"Trying Orange Book search with {field}: {query}")
+            try:
+                if EMERGENCY_UNCACHED:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(url, params=params)
+                        response.raise_for_status()
+                        result = response.json()
+                else:
+                    result = await make_request(url, params=params)
+                if result and "results" in result and result["results"]:
+                    used_query = query
+                    used_field = field
+                    logger.info(f"Found Orange Book results with {field}")
+                    break
+                else:
+                    logger.debug(f"No results for {field} strategy")
+                    continue
+            except Exception as e:
+                logger.warning(f"FDA Orange Book search failed for {field}: {e}")
+                continue
+
         if not result or "results" not in result or not result["results"]:
-            logger.warning(f"No Orange Book data found for {search_description}")
+            logger.warning(f"No Orange Book data found for any search strategy")
             return OrangeBookResponse(
-                query=search_description,
+                query=f"No results for {name or ''} {active_ingredient or ''} {ndc or ''}",
                 total_results=0,
                 displayed_results=0,
                 products=[]
@@ -151,57 +174,72 @@ async def search_orange_book(
             # Process each product and extract therapeutic equivalence data
             # Handle both old and new FDA API formats
             
-            # Get basic product data
+            # Process each product - handles different FDA API formats
             processed_products = []
-            
-            if "products" in product:
-                # Handle the newer API format which includes a products array
-                for prod in product.get("products", []):
-                    # Extract therapeutic equivalence code if available
+            if "products" in product:  # New FDA API format with nested products
+                for item in product["products"]:
+                    # Get therapeutic equivalence code
                     te_code = None
-                    # Check for direct te_code field first (standard format)
-                    if prod.get("te_code"):
-                        te_code = prod.get("te_code")
-                    # Otherwise check for te_ratings array (newer format)
-                    elif prod.get("te_ratings"):
-                        for rating in prod.get("te_ratings", []):
-                            if rating.get("rating_id"):
-                                te_code = rating.get("rating_id")
-                                break
+                    if "te_code" in item:
+                        te_code = item["te_code"]
+                    elif "te_ratings" in item and item["te_ratings"]:
+                        # Extract from te_ratings if available
+                        if isinstance(item["te_ratings"], list) and len(item["te_ratings"]) > 0:
+                            te_code = item["te_ratings"][0].get("te_code")
                     
-                    # Create product entry
-                    processed_products.append({
-                        "appl_no": product.get("application_number"),
-                        "product_no": prod.get("product_number"),
-                        "form": prod.get("dosage_form", {}).get("form"),
-                        "strength": prod.get("active_ingredients", [{}])[0].get("strength") if prod.get("active_ingredients") else None,
-                        "reference_drug": prod.get("reference_drug") == "Yes",
-                        "drug_name": prod.get("brand_name") or prod.get("proprietary_name"),
-                        "active_ingredient": ", ".join([ing.get("name") for ing in prod.get("active_ingredients", [])]) if prod.get("active_ingredients") else None,
-                        "reference_standard": prod.get("reference_standard") == "Yes",
-                        "te_code": te_code,
-                        "applicant": product.get("sponsor_name"),
-                        "approval_date": prod.get("approval_date"),
-                        "product_id": prod.get("product_id"),  # This is usually related to the NDC
-                        "market_status": prod.get("market_status")
-                    })
+                    # Skip items without therapeutic equivalence data
+                    if not te_code:
+                        continue
+                    
+                    # Check data quality - whether critical fields are present
+                    missing_fields = []
+                    if not item.get("brand_name") and not item.get("proprietary_name"):
+                        missing_fields.append("name")
+                    if not item.get("active_ingredient"):
+                        missing_fields.append("ingredient")
+                    if not item.get("dosage_form") and not (isinstance(item.get("dosage_form"), dict) and item["dosage_form"].get("form")):
+                        missing_fields.append("form")
+                    
+                    data_quality = None
+                    if missing_fields:
+                        data_quality = f"Missing: {', '.join(missing_fields)}"
+                    
+                    processed_products.append(TherapeuticEquivalenceData(
+                        appl_no=product.get("application_number"),
+                        product_no=item.get("product_number"),
+                        form=item.get("dosage_form", {}).get("form") if isinstance(item.get("dosage_form"), dict) else item.get("dosage_form"),
+                        strength=item.get("strength"),
+                        reference_drug=item.get("reference_drug") == "Yes",
+                        drug_name=item.get("brand_name", item.get("proprietary_name")),
+                        active_ingredient=item.get("active_ingredient"),
+                        reference_standard=item.get("reference_standard") == "Yes",
+                        te_code=te_code,
+                        applicant=product.get("sponsor_name"),
+                        approval_date=item.get("approval_date"),
+                        product_id=item.get("product_id"),  # This is usually related to the NDC
+                        market_status=item.get("marketing_status"),
+                        source_field=used_field,  # Store which search strategy yielded the result
+                        data_quality=data_quality  # Store information about missing critical fields
+                    ))
             else:
                 # Handle older API format or simple single-product response
-                processed_products.append({
-                    "appl_no": product.get("application_number"),
-                    "product_no": product.get("product_number"),
-                    "form": product.get("dosage_form"),
-                    "strength": product.get("strength"),
-                    "reference_drug": False,  # Default value for older format
-                    "drug_name": product.get("trade_name") or product.get("brand_name") or product.get("generic_name"),
-                    "active_ingredient": product.get("active_ingredient"),
-                    "reference_standard": False,  # Default value for older format
-                    "te_code": product.get("te_code"),
-                    "applicant": product.get("applicant") or product.get("sponsor_name"),
-                    "approval_date": product.get("approval_date"),
-                    "product_id": product.get("product_id"),  # This is usually related to the NDC
-                    "market_status": product.get("marketing_status")
-                })
+                processed_products.append(TherapeuticEquivalenceData(
+                    appl_no=product.get("application_number"),
+                    product_no=product.get("product_number"),
+                    form=product.get("dosage_form"),
+                    strength=product.get("strength"),
+                    reference_drug=False,
+                    drug_name=product.get("trade_name") or product.get("brand_name") or product.get("generic_name"),
+                    active_ingredient=product.get("active_ingredient"),
+                    reference_standard=False,
+                    te_code=product.get("te_code"),
+                    applicant=product.get("applicant") or product.get("sponsor_name"),
+                    approval_date=product.get("approval_date"),
+                    product_id=product.get("product_id"),  # This is usually related to the NDC
+                    market_status=product.get("marketing_status"),
+                    source_field=used_field,  # Store which search strategy yielded the result
+                    data_quality=None  # No data quality check for older format
+                ))
             
             # Add all processed products to the results
             products.extend(processed_products)

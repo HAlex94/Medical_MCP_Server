@@ -4,17 +4,43 @@ FDA Label Information Routes
 Specialized routes for retrieving comprehensive drug label information from FDA APIs,
 designed for consistent LLM consumption with intelligent fallback mechanisms.
 """
-from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Query, HTTPException
-import httpx
+from typing import List, Dict, Any, Optional, Union
+from fastapi import APIRouter, HTTPException
 import os
 import logging
+import urllib.parse
 from pydantic import BaseModel
 from app.utils.api_clients import make_request
 from app.utils.api_clients import get_api_key
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Helper function for safer OpenFDA field extraction
+def get_openfda_field(openfda, field, fallback=None):
+    """Safely extract a field from OpenFDA data handling both list and string formats"""
+    val = openfda.get(field, None)
+    if isinstance(val, list):
+        return val[0] if val else fallback
+    elif isinstance(val, str):
+        return val
+    return fallback
+
+# Safely get first item from a list or return the value itself
+def first_or_value(val, fallback=None):
+    """Get first item if list, return value if string, or fallback if neither"""
+    if isinstance(val, list) and val:
+        return val[0]
+    return val if val is not None else fallback
+
+# Ensure a value is always returned as a list for consistent response typing
+def to_list(value):
+    """Ensure a value is always returned as a list for consistent output typing"""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
 
 # Define important label sections we want to retrieve
 IMPORTANT_LABEL_SECTIONS = [
@@ -50,58 +76,89 @@ class DrugLabelResponse(BaseModel):
     application_numbers: Optional[List[str]] = None
     message: Optional[str] = None
 
-async def search_fda_label_with_fallbacks(
-    name=None, 
-    active_ingredient=None, 
-    ndc=None, 
-    limit=1
-):
-    """Search FDA label API with multiple fallback strategies"""
-    # Implement intelligent query path selection
-    search_queries = []
+async def search_label_info(name=None, active_ingredient=None, ndc=None, limit=25):
+    """
+    Search FDA label data with a robust fallback strategy to handle FDA's quirky API responses
     
-    # 1. Try exact name match if provided (least likely to work but most precise)
+    Returns:
+        tuple: (results, successful_strategy) - the FDA API results and which strategy worked
+    """
+    name_orig = name
+    name = name.upper() if name else None
+    active_ingredient = active_ingredient.upper() if active_ingredient else None
+    
+    # Clean NDC format
+    ndc_clean = ndc.replace("-", "") if ndc else None
+    
+    # Ordered list of search strategies to try
+    search_orders = []
+    
+    # 1. Direct NDC lookups (most reliable)
+    if ndc_clean:
+        search_orders.append((f'openfda.product_ndc:"{ndc_clean}"', "NDC exact match"))
+        search_orders.append((f'openfda.product_ndc:{ndc_clean}', "NDC match"))
+        search_orders.append((f'openfda.package_ndc:"{ndc_clean}"', "Package NDC exact match"))
+    
+    # 2. UPPERCASE brand name (preferred form)
     if name:
-        search_queries.append(f"openfda.brand_name.exact:\"{name}\"")
-        search_queries.append(f"openfda.brand_name:\"{name}\"") 
-        search_queries.append(f"brand_name:\"{name}\"")
+        search_orders.append((f'openfda.brand_name:"{name}"', "Brand name uppercase"))
+        search_orders.append((f'brand_name:"{name}"', "Brand name (non-openfda) uppercase"))
+        search_orders.append((f'openfda.generic_name:"{name}"', "Generic name uppercase"))
     
-    # 2. Try active ingredient if provided
+    # 3. UPPERCASE active ingredient (preferred form)
     if active_ingredient:
-        search_queries.append(f"openfda.generic_name.exact:\"{active_ingredient}\"")
-        search_queries.append(f"openfda.generic_name:\"{active_ingredient}\"")
-        search_queries.append(f"openfda.substance_name:\"{active_ingredient}\"")
+        search_orders.append((f'openfda.substance_name:"{active_ingredient}"', "Substance name uppercase"))
+        search_orders.append((f'openfda.generic_name:"{active_ingredient}"', "Generic name uppercase"))
+        
+    # 4. Try with non-exact brand name match (catch variants)
+    if name:
+        search_orders.append((f'openfda.brand_name:{name}', "Brand name partial uppercase"))  # Notice no quotes
+        search_orders.append((f'openfda.generic_name:{name}', "Generic name partial uppercase"))
+
+    # 5. Try with non-exact active ingredient match (catch variants)
+    if active_ingredient:
+        search_orders.append((f'openfda.substance_name:{active_ingredient}', "Substance name partial uppercase"))
+        search_orders.append((f'openfda.generic_name:{active_ingredient}', "Generic name partial uppercase"))
+        
+    # 6. Try original case if all uppercase failed
+    if name_orig:
+        search_orders.append((f'openfda.brand_name:"{name_orig}"', "Brand name original"))
+        search_orders.append((f'openfda.generic_name:"{name_orig}"', "Generic name original"))
+        search_orders.append((f'drug_name:"{name_orig}"', "Drug name original"))
     
-    # 3. Try NDC if provided (most reliable when available)
-    if ndc:
-        search_queries.append(f"openfda.product_ndc.exact:\"{ndc}\"") 
-        search_queries.append(f"openfda.product_ndc:\"{ndc}\"")
-        search_queries.append(f"product_ndc:\"{ndc}\"")
+    # Clean name by removing problematic characters that might interfere with search
+    clean_name = name_orig.replace("'", "").replace('"', '').strip()
+    if clean_name != name_orig:
+        search_orders.append((f'openfda.brand_name:{clean_name}', "Brand name clean"))
     
-    # If we have a name but no active ingredient or NDC, try partial matches
-    if name and not (active_ingredient or ndc):
-        search_queries.append(f"openfda.brand_name:{name}")
-    
-    # Make queries in order until we get a valid result
-    for search_query in search_queries:
-        try:
-            url = f"https://api.fda.gov/drug/label.json?search={search_query}&limit={limit}"
-            api_key = get_api_key("FDA_API_KEY")
-            if api_key:
-                url += f"&api_key={api_key}"
-                
-            response = await make_request(url)
+    # Try each search strategy in order until we get results
+    for query, strategy_name in search_orders:
+        # URL encode the query to handle special characters
+        encoded_query = urllib.parse.quote_plus(query)
+        url = f"https://api.fda.gov/drug/label.json?search={encoded_query}&limit={limit}"
+        
+        # Add API key if available (increases rate limits)
+        api_key = get_api_key("FDA_API_KEY")
+        if api_key:
+            url += f"&api_key={api_key}"
             
-            # If we got results, return them
-            if response and "results" in response and len(response["results"]) > 0:
-                return response
-                
+        logger.info(f"Trying FDA label search with strategy: {strategy_name} - {query}")
+        
+        try:
+            # Make the API request
+            result = await make_request(url)
+            
+            # Check if we got valid results
+            if result and "results" in result and result["results"]:
+                logger.info(f"Found label data with strategy: {strategy_name}")
+                return result["results"], strategy_name
         except Exception as e:
-            logger.debug(f"Query failed: {search_query}. Error: {str(e)}")
+            logger.warning(f"FDA Label search failed for {strategy_name}: {str(e)}")
             continue
     
-    # If all queries failed, return None
-    return None
+    # If we've tried all strategies and found nothing
+    logger.warning(f"All FDA label search strategies failed, no results found for: name={name}, ingredient={active_ingredient}, ndc={ndc}")
+    return [], "No successful strategy"
 
 def extract_label_sections(label_data):
     """Extract important sections from a drug label result"""
@@ -138,14 +195,15 @@ async def get_label_info(
         raise HTTPException(status_code=400, detail="At least one search parameter (name, ndc, or active_ingredient) is required")
         
     try:
-        # Search FDA label API with fallbacks
-        label_response = await search_fda_label_with_fallbacks(name, active_ingredient, ndc)
+        # Search FDA label API with robust fallback logic
+        label_results, successful_strategy = await search_label_info(name, active_ingredient, ndc)
+        logger.info(f"Successfully found label data using strategy: {successful_strategy}")
         
-        if not label_response or "results" not in label_response or not label_response["results"]:
+        if not label_results:
             raise HTTPException(status_code=404, detail="No drug label information found for the provided parameters")
             
         # Get the first label result (most relevant)
-        label_data = label_response["results"][0]
+        label_data = label_results[0]
         
         # Extract openfda metadata if available
         openfda = label_data.get("openfda", {})
@@ -153,21 +211,34 @@ async def get_label_info(
         # Extract important sections
         sections = extract_label_sections(label_data)
         
-        # Create response
+        # Create response using safer field extraction and consistent typing
+        # Deduplicate NDCs if they exist
+        ndc_list = to_list(openfda.get("product_ndc")) if openfda.get("product_ndc") else ([ndc] if ndc else [])
+        if ndc_list:
+            ndc_list = list(set(ndc_list))  # Remove duplicates
+        
         response = DrugLabelResponse(
-            brand_name=openfda.get("brand_name", [name])[0] if openfda.get("brand_name") else name,
-            generic_name=openfda.get("generic_name", [active_ingredient])[0] if openfda.get("generic_name") else active_ingredient,
-            manufacturer=openfda.get("manufacturer_name", ["Unknown"])[0] if openfda.get("manufacturer_name") else None,
-            ndc=openfda.get("product_ndc", [ndc]) if openfda.get("product_ndc") else ([ndc] if ndc else None),
+            brand_name=get_openfda_field(openfda, "brand_name", name),
+            generic_name=get_openfda_field(openfda, "generic_name", active_ingredient),
+            manufacturer=get_openfda_field(openfda, "manufacturer_name", "Unknown"),
+            ndc=ndc_list,
             sections=sections,
-            dosage_forms=openfda.get("dosage_form") if openfda.get("dosage_form") else None,
-            route=openfda.get("route") if openfda.get("route") else None,
-            application_numbers=openfda.get("application_number") if openfda.get("application_number") else None,
+            dosage_forms=to_list(openfda.get("dosage_form")),
+            route=to_list(openfda.get("route")),
+            application_numbers=to_list(openfda.get("application_number")),
         )
         
-        # Add message if no sections found
+        # Add informative messages
+        messages = []
         if not sections:
-            response.message = "Found drug label but no label sections were available"
+            messages.append("Found drug label but no label sections were available")
+            
+        # Add a note if multiple results were found but only first is being used
+        if len(label_results) > 1:
+            messages.append(f"Found {len(label_results)} matching products. Using the first/most relevant result.")
+            
+        if messages:
+            response.message = ". ".join(messages)
             
         return response
     except HTTPException:
