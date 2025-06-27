@@ -222,7 +222,22 @@ async def find_reference_product(name=None, active_ingredient=None, ndc=None):
         ingredient_title = active_ingredient.title()
         ingredient_orig = active_ingredient
         
-        # Try UPPERCASE first
+        # If the input looks like a generic name, prioritize generic name searches
+        if name and name.lower() == active_ingredient.lower():
+            # Try direct generic name searches first for common generics like "simvastatin"
+            search_strategies.insert(0, (f"openfda.generic_name:\"{ingredient_up}\"", "Direct Generic UP"))
+            search_strategies.insert(1, (f"openfda.generic_name:\"{ingredient_title}\"", "Direct Generic Title"))
+            search_strategies.insert(2, (f"openfda.generic_name:\"{ingredient_orig}\"", "Direct Generic Original"))
+            
+            # Try substance name searches
+            search_strategies.insert(3, (f"openfda.substance_name:\"{ingredient_up}\"", "Direct Substance UP"))
+            search_strategies.insert(4, (f"openfda.substance_name:\"{ingredient_title}\"", "Direct Substance Title"))
+            
+            # Try additional product-based searches
+            search_strategies.insert(5, (f"products.active_ingredients.name:\"{ingredient_up}\"", "Direct Active Ingredient UP"))
+            search_strategies.insert(6, (f"products.generic_name:\"{ingredient_up}\"", "Direct Product Generic UP"))
+            
+        # Standard active ingredient search strategies
         search_strategies.append((f"openfda.generic_name:\"{ingredient_up}\"", "Generic UP"))
         search_strategies.append((f"openfda.substance_name:\"{ingredient_up}\"", "Substance UP"))
         search_strategies.append((f"products.active_ingredients.name:\"{ingredient_up}\"", "Active ingredients UP"))
@@ -340,11 +355,30 @@ async def find_reference_product(name=None, active_ingredient=None, ndc=None):
                 
                 # Last resort: just use the first product found
                 if response["results"] and "products" in response["results"][0]:
-                    product = response["results"][0]["products"][0]
+                    # Look for reference drug products first
+                    reference_products = []
+                    for product in response["results"][0]["products"]:
+                        if product.get("reference_drug") == "Yes":
+                            reference_products.append(product)
+                    
+                    # If we found reference products, use the first one
+                    if reference_products:
+                        product = reference_products[0]
+                    else:
+                        # Otherwise just use the first product
+                        product = response["results"][0]["products"][0]
+                        
                     sponsor_name = response["results"][0].get("sponsor_name", "Unknown")
-                    logger.info(f"Using first product as reference: {product.get('brand_name', 'Unknown')}")
+                    logger.info(f"Using product as reference: {product.get('brand_name', 'Unknown')}")
+                    
+                    # For generic drugs, make sure to use the generic name if brand name is missing
+                    product_name = product.get("brand_name")
+                    if not product_name and "openfda" in response["results"][0]:
+                        openfda = response["results"][0]["openfda"]
+                        product_name = openfda.get("generic_name", [name])[0] if openfda.get("generic_name") else name
+                        
                     return {
-                        "brand_name": product.get("brand_name", name or "Unknown"),
+                        "brand_name": product_name or name or "Unknown",
                         "manufacturer": sponsor_name,
                         "application_number": response["results"][0].get("application_number"),
                         "te_code": product.get("te_code"),

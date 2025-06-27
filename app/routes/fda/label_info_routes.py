@@ -164,7 +164,7 @@ async def try_label_for_field(ndc: str, field: str) -> Optional[Dict]:
         return None
         
     # Clean NDC format
-    ndc_clean = ndc.replace("-", "") if ndc else None
+    ndc_clean = ndc.replace("-", "") if ndc else ""
     
     try:
         # URL encode the query
@@ -214,7 +214,7 @@ async def search_label_info(name=None, active_ingredient=None, ndc=None, limit=2
     active_ingredient = active_ingredient.upper() if active_ingredient else None
     
     # Clean NDC format
-    ndc_clean = ndc.replace("-", "") if ndc else None
+    ndc_clean = ndc.replace("-", "") if ndc else ""
     
     # Ordered list of search strategies to try
     search_orders = []
@@ -724,8 +724,8 @@ async def llm_label_discover(
         
         # If specific NDC provided, use it first
         if ndc:
-            # Clean NDC format
-            ndc_clean = ndc.replace("-", "")
+            # Clean NDC format - safely handle potential None values
+            ndc_clean = ndc.replace("-", "") if ndc else ""
             candidate_ndcs.append(ndc_clean)
             all_ndcs_tried.add(ndc_clean)
         

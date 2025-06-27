@@ -93,7 +93,7 @@ async def search_orange_book(
         name_title = name.title() if name else None
         ingredient_up = active_ingredient.upper() if active_ingredient else None
         ingredient_title = active_ingredient.title() if active_ingredient else None
-        ndc_clean = ndc.replace("-", "") if ndc else None
+        ndc_clean = ndc.replace("-", "") if ndc else ""
 
         # Ordered search field strategies with multiple case variants
         search_orders = [
