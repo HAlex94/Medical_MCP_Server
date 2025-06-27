@@ -164,6 +164,34 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "te_code",
+            "in": "query",
+            "description": "Filter by specific therapeutic equivalence code (e.g., 'AB', 'AB1')",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by_te_code",
+            "in": "query",
+            "description": "Group equivalent products by their TE code for easier analysis",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "description": "Comma-separated fields to include in response",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -234,9 +262,50 @@
                       },
                       "description": "List of therapeutically equivalent products"
                     },
+                    "grouped_by_te_code": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/EquivalentProduct"
+                        }
+                      },
+                      "description": "Products grouped by therapeutic equivalence code when group_by_te_code=true"
+                    },
+                    "reference_drug_warning": {
+                      "type": "string",
+                      "description": "Warning message when multiple reference drugs are detected"
+                    },
+                    "search_method": {
+                      "type": "string",
+                      "description": "The successful search strategy used to find the reference product"
+                    },
+                    "search_attempts": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "List of all search strategies attempted"
+                    },
+                    "available_fields": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "List of available fields in the response for discoverability"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "description": "Additional metadata about the query and results"
+                    },
                     "message": {
                       "type": "string",
                       "description": "Additional information about the response"
+                    },
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the API call was successful"
                     }
                   }
                 }
