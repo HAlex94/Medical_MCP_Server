@@ -17,6 +17,20 @@ from app.utils.api_clients import get_api_key
 router = APIRouter()
 logger = logging.getLogger("app.routes.fda")
 
+def normalize_ndc(ndc: str) -> str:
+    """Normalize NDC by removing dashes and spaces for consistent lookup
+    
+    Args:
+        ndc: NDC code that may contain dashes or other formatting
+        
+    Returns:
+        Cleaned NDC suitable for FDA API queries
+    """
+    if not ndc:
+        return ""
+    # Remove dashes, spaces, and any other non-alphanumeric characters
+    return re.sub(r'[^a-zA-Z0-9]', '', ndc)
+
 
 async def get_ndc_from_name(name: str) -> Optional[str]:
     """
@@ -91,7 +105,7 @@ class EquivalentProduct(BaseModel):
     reference_drug: Optional[bool] = False
 
 class TherapeuticEquivalenceResponse(BaseModel):
-    """Response model for therapeutic equivalence data"""
+    """Response model for therapeutic equivalence data with enhanced LLM-friendly fields"""
     success: bool = True
     brand_name: Optional[str] = None
     active_ingredient: Optional[str] = None
@@ -100,9 +114,16 @@ class TherapeuticEquivalenceResponse(BaseModel):
     reference_drug: bool = False
     reference_product: Optional[EquivalentProduct] = None
     equivalent_products: List[EquivalentProduct] = []
+    # TE code grouping for easier LLM consumption
+    grouped_by_te_code: Optional[Dict[str, List[EquivalentProduct]]] = None
+    # Reference drug detection metadata
+    reference_drug_warning: Optional[str] = None
+    # Standard diagnostics
     message: Optional[str] = None
     search_method: Optional[str] = None
     search_attempts: Optional[List[str]] = []
+    available_fields: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 async def find_reference_product(name=None, active_ingredient=None, ndc=None):
     """Find a reference product using different search strategies with enhanced fallback logic"""
@@ -111,8 +132,8 @@ async def find_reference_product(name=None, active_ingredient=None, ndc=None):
     
     # Strategy 1: If we have an NDC, that's the most specific identifier
     if ndc:
-        # Clean up NDC format - some have dashes, FDA doesn't want them
-        clean_ndc = ndc.replace("-", "")
+        # Clean up NDC format - ensure consistent normalization across all NDC lookups
+        clean_ndc = normalize_ndc(ndc)
         search_strategies.append((f"openfda.product_ndc:\"{clean_ndc}\"", "NDC product"))
         search_strategies.append((f"products.product_ndc:\"{clean_ndc}\"", "NDC products"))
         search_strategies.append((f"openfda.package_ndc:\"{clean_ndc}\"", "NDC package"))
@@ -446,7 +467,10 @@ async def find_equivalent_products(reference_product, active_ingredient=None):
 async def get_therapeutic_equivalence(
     name: Optional[str] = Query(None, description="Drug brand name to search for"),
     ndc: Optional[str] = Query(None, description="NDC code to search for"),
-    active_ingredient: Optional[str] = Query(None, description="Active ingredient to search for")
+    active_ingredient: Optional[str] = Query(None, description="Active ingredient to search for"),
+    te_code: Optional[str] = Query(None, description="Filter by specific therapeutic equivalence code (e.g., 'AB', 'AB1')"),
+    group_by_te_code: bool = Query(False, description="Group equivalent products by their TE code for easier analysis"),
+    fields: Optional[str] = Query(None, description="Comma-separated fields to include in response")
 ):
     """Get therapeutic equivalence information for a drug
     
@@ -520,11 +544,24 @@ async def get_therapeutic_equivalence(
         if not reference_product:
             search_attempts = ", ".join(search_trail)
             logger.warning(f"Could not find reference product after all attempts: {search_attempts}")
+            # Ensure error response has similar structure to success for LLM consistency
             return TherapeuticEquivalenceResponse(
                 success=False,
                 message=f"Could not find reference product for {name or active_ingredient or ndc} after trying: {search_attempts}",
                 reference_product=None,
-                equivalent_products=[]
+                equivalent_products=[],
+                search_method="none",
+                search_attempts=search_trail,
+                available_fields=[],
+                metadata={
+                    "query_parameters": {
+                        "ndc": ndc,
+                        "name": name,
+                        "active_ingredient": active_ingredient,
+                        "te_code": te_code
+                    },
+                    "error": "Reference product not found after multiple search strategies"
+                }
             )
         
         # If we found a reference product, extract its active ingredient if we don't already have one
@@ -535,7 +572,56 @@ async def get_therapeutic_equivalence(
         # Then find therapeutically equivalent products
         equivalent_products = await find_equivalent_products(reference_product, active_ingredient)
         
-        # Create response with consistent model fields
+        # TE code filtering if specified
+        filtered_products = equivalent_products
+        if te_code and equivalent_products:
+            te_code = te_code.upper()  # Normalize for case-insensitive comparison
+            filtered_products = [
+                product for product in equivalent_products
+                if product.te_code and product.te_code.startswith(te_code)
+            ]
+            search_trail.append(f"TE code filtering: {te_code}")
+            logger.info(f"Filtered to {len(filtered_products)} products with TE code {te_code}")
+        
+        # Field selection logic
+        selected_fields = None
+        if fields:
+            selected_fields = [f.strip().lower() for f in fields.split(",") if f.strip()]
+            search_trail.append(f"Field selection: {fields}")
+            logger.info(f"Selected fields: {selected_fields}")
+        
+        # Get available fields from the products for response metadata
+        available_fields = []
+        if filtered_products:
+            # Extract field names from the first product
+            sample_product = filtered_products[0]
+            # Get fields from the model - compatible with different Pydantic versions
+            available_fields = sorted([
+                field_name for field_name in dir(sample_product) 
+                if not field_name.startswith('_') and not callable(getattr(sample_product, field_name))
+            ])
+        
+        # Check for multiple reference drugs (potential FDA data inconsistency)
+        reference_drug_warning = None
+        reference_drug_count = sum(1 for p in filtered_products if getattr(p, 'reference_drug', False))
+        if reference_drug_count > 1:
+            reference_drug_warning = f"Found {reference_drug_count} products marked as reference drugs. This may indicate FDA data inconsistency."
+            logger.warning(reference_drug_warning)
+        
+        # Group products by TE code if requested
+        grouped_products = None
+        if group_by_te_code and filtered_products:
+            grouped_products = {}
+            for product in filtered_products:
+                te_code_key = product.te_code if product.te_code else "Unknown"
+                if te_code_key not in grouped_products:
+                    grouped_products[te_code_key] = []
+                grouped_products[te_code_key].append(product)
+            
+            # Sort groups by code for consistent ordering
+            grouped_products = {k: grouped_products[k] for k in sorted(grouped_products.keys())}
+        
+        # Create response with consistent model fields and enhanced metadata
         response = TherapeuticEquivalenceResponse(
             success=True,
             brand_name=reference_product.get('brand_name'),
@@ -544,19 +630,61 @@ async def get_therapeutic_equivalence(
             te_codes=[reference_product.get('te_code')] if reference_product.get('te_code') else [],
             reference_drug=reference_product.get('reference_drug', False),
             reference_product=EquivalentProduct(**reference_product) if isinstance(reference_product, dict) else reference_product,
-            equivalent_products=equivalent_products,
+            equivalent_products=filtered_products,
+            grouped_by_te_code=grouped_products,
+            reference_drug_warning=reference_drug_warning,
             search_method=successful_strategy,
-            search_attempts=search_trail
+            search_attempts=search_trail,
+            available_fields=available_fields,
+            metadata={
+                "reference_product": {
+                    "ndc": reference_product.get('ndc'),
+                    "name": reference_product.get('brand_name'),
+                    "active_ingredient": active_ingredient
+                },
+                "te_code_filter": te_code,
+                "selected_fields": selected_fields,
+                "total_equivalents": len(equivalent_products),
+                "filtered_equivalents": len(filtered_products)
+            }
         )
         
-        # Add appropriate message
+        # Add appropriate message based on filtering results
         if not equivalent_products:
             response.message = "Found reference drug but no therapeutically equivalent products"
+        elif not filtered_products and equivalent_products:
+            response.message = f"Found {len(equivalent_products)} equivalent products, but none match the TE code filter '{te_code}'"
         else:
-            response.message = f"Found {len(equivalent_products)} therapeutically equivalent products"
+            filtered_message = ""
+            if te_code and len(filtered_products) != len(equivalent_products):
+                filtered_message = f" ({len(filtered_products)} after filtering for TE code '{te_code}')"
+                
+            response.message = f"Found {len(equivalent_products)} therapeutically equivalent products{filtered_message}"
+            
+            # Add grouping information if applicable
+            if grouped_products:
+                te_code_summary = ", ".join([f"{code}: {len(prods)}" for code, prods in grouped_products.items()])
+                response.message += f". Grouped by TE code: {te_code_summary}"
         
-        logger.info(f"Found reference product: {reference_product['brand_name']} with {len(equivalent_products)} equivalent products")
+        logger.info(f"Found reference product: {reference_product['brand_name']} with {len(filtered_products)} equivalent products after filtering")
         return response
     except Exception as e:
-        logger.error(f"Error getting therapeutic equivalence: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving therapeutic equivalence data: {str(e)}")
+        logger.error(f"Error getting therapeutic equivalence: {str(e)}", exc_info=True)
+        
+        # Provide a consistent error response with metadata
+        return TherapeuticEquivalenceResponse(
+            success=False,
+            message=f"Error getting therapeutic equivalence: {str(e)}",
+            search_method="error",
+            search_attempts=search_trail if 'search_trail' in locals() else [],
+            metadata={
+                "query_parameters": {
+                    "ndc": ndc,
+                    "name": name,
+                    "active_ingredient": active_ingredient,
+                    "te_code": te_code
+                },
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+        )
