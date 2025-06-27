@@ -4,12 +4,12 @@ FDA Label Information Routes
 Specialized routes for retrieving comprehensive drug label information from FDA APIs,
 designed for consistent LLM consumption with intelligent fallback mechanisms.
 """
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Set
 from fastapi import APIRouter, HTTPException
 import os
 import logging
 import urllib.parse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.utils.api_clients import make_request
 from app.utils.api_clients import get_api_key
 
@@ -633,6 +633,15 @@ class FieldResult(BaseModel):
     search_strategy: Optional[str] = None
     all_sections: List[LabelSection] = []
     message: Optional[str] = None
+    truncated: bool = False
+    original_length: Optional[int] = None
+
+class SizeOptimizationMetadata(BaseModel):
+    """Metadata about size optimization"""
+    applied: bool = False
+    max_content_length: Optional[int] = None
+    truncated_fields: List[str] = []
+    total_characters_saved: int = 0
 
 class LLMLabelDiscoverResponse(BaseModel):
     """Response model for the LLM-optimized label discovery endpoint"""
@@ -643,6 +652,7 @@ class LLMLabelDiscoverResponse(BaseModel):
     all_ndcs_tried: List[str] = []
     available_fields: List[str] = []
     search_strategies_used: List[str] = []
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 @router.get("/label/llm-discover", response_model=LLMLabelDiscoverResponse)
 async def llm_label_discover(
@@ -651,6 +661,9 @@ async def llm_label_discover(
     fields: Optional[str] = Query(None, description="Comma-separated list of label fields to retrieve (e.g., 'boxed_warning,indications_and_usage'). If not provided, returns all available."),
     ndc_limit: int = Query(10, description="Max number of NDCs to try if name given"),
     last_ditch: bool = Query(True, description="If True, will try a last-ditch _exists_: search for each field if all else fails"),
+    max_content_length: Optional[int] = Query(10000, description="Maximum character length for each field content before truncation"),
+    max_size: bool = Query(True, description="Apply size optimization to prevent LLM context overflows"),
+    include_metadata: bool = Query(False, description="Include full OpenFDA metadata in response (increases size)"),
 ):
     """
     Unified, robust endpoint to discover FDA drug label data for one or more fields, with multi-strategy fallback.
@@ -788,6 +801,14 @@ async def llm_label_discover(
                             content = label[field]
                             if isinstance(content, list):
                                 content = " ".join(content)
+                                
+                            # Apply content length restriction if max_size is enabled
+                            if max_size and max_content_length > 0 and len(content) > max_content_length:
+                                original_length = len(content)
+                                content = content[:max_content_length] + f"... [truncated, {original_length-max_content_length} more characters]"
+                                field_result.truncated = True
+                                field_result.original_length = original_length
+                            
                             field_result.content = content
                             field_result.search_strategy = f"Substance name search: {name}"
                             
@@ -835,6 +856,14 @@ async def llm_label_discover(
                             content = label[field]
                             if isinstance(content, list):
                                 content = " ".join(content)
+                            
+                            # Apply content length restriction if max_size is enabled
+                            if max_size and max_content_length > 0 and len(content) > max_content_length:
+                                original_length = len(content)
+                                content = content[:max_content_length] + f"... [truncated, {original_length-max_content_length} more characters]"
+                                field_result.truncated = True
+                                field_result.original_length = original_length
+                            
                             field_result.content = content
                             field_result.search_strategy = f"_exists_ search: {field}"
                             
@@ -889,6 +918,53 @@ async def llm_label_discover(
                     if "brand_name" in openfda and openfda["brand_name"]:
                         drug_name = openfda["brand_name"][0]
                         break
+                        
+        # Add size optimization metadata
+        metadata = {}
+        truncated_fields = []
+        total_characters_saved = 0
+        size_optimization_applied = max_size and max_content_length > 0
+        
+        # Calculate total character savings and collect truncated field names
+        if size_optimization_applied:
+            for field_result in field_results:
+                if field_result.truncated and field_result.original_length is not None:
+                    truncated_fields.append(field_result.field)
+                    characters_saved = field_result.original_length - len(field_result.content)
+                    total_characters_saved += characters_saved
+        
+        # Add warning about truncation to the message if fields were truncated
+        if truncated_fields:
+            if message:
+                message += f" {len(truncated_fields)} fields were truncated to limit response size."
+            else:
+                message = f"{len(truncated_fields)} fields were truncated to limit response size."
+        
+        # Create size optimization metadata
+        if size_optimization_applied:
+            metadata["size_optimization"] = {
+                "applied": True,
+                "max_content_length": max_content_length,
+                "truncated_fields": truncated_fields,
+                "total_characters_saved": total_characters_saved
+            }
+        
+        # Add parameter metadata
+        metadata["query_parameters"] = {
+            "name": name,
+            "ndc": ndc,
+            "fields": fields,
+            "ndc_limit": ndc_limit, 
+            "last_ditch": last_ditch,
+            "max_content_length": max_content_length,
+            "max_size": max_size,
+            "include_metadata": include_metadata
+        }
+        
+        # Remove metadata from sections if not requested
+        if not include_metadata:
+            for field_result in field_results:
+                field_result.all_sections = []
         
         return LLMLabelDiscoverResponse(
             success=found_count > 0,
@@ -897,7 +973,8 @@ async def llm_label_discover(
             message=message,
             all_ndcs_tried=all_ndcs_list,
             available_fields=available_fields,
-            search_strategies_used=search_strategies_used
+            search_strategies_used=search_strategies_used,
+            metadata=metadata
         )
     
     except HTTPException:
