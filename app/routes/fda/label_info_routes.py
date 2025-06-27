@@ -575,3 +575,200 @@ async def auto_discover_label(
         logger.error(f"Error in auto-discover label: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving label field: {str(e)}")
 
+
+# --- Unified LLM-optimized Label Discovery Endpoint ---
+
+class FieldResult(BaseModel):
+    """Results for a specific label field"""
+    field: str
+    found: bool
+    content: Optional[str] = None
+    ndc: Optional[str] = None
+    ndcs_tried: List[str] = []
+    search_strategy: Optional[str] = None
+    all_sections: List[LabelSection] = []
+    message: Optional[str] = None
+
+class LLMLabelDiscoverResponse(BaseModel):
+    """Response model for the LLM-optimized label discovery endpoint"""
+    success: bool = True
+    drug_name: str
+    fields: List[FieldResult] = []
+    message: Optional[str] = None
+
+@router.get("/label/llm-discover", response_model=LLMLabelDiscoverResponse)
+async def llm_label_discover(
+    name: Optional[str] = Query(None, description="Brand or generic name of the drug"),
+    ndc: Optional[str] = Query(None, description="NDC code of the drug (optional, increases accuracy)"),
+    fields: Optional[str] = Query(None, description="Comma-separated list of label fields to retrieve (e.g., 'boxed_warning,indications_and_usage'). If not provided, returns all available."),
+    ndc_limit: int = Query(10, description="Max number of NDCs to try if name given"),
+    last_ditch: bool = Query(True, description="If True, will try a last-ditch _exists_: search for each field if all else fails"),
+):
+    """
+    Unified, robust endpoint to discover FDA drug label data for one or more fields, with multi-strategy fallback.
+    
+    This endpoint combines the best features of label/search and label/auto-discover in a single LLM-optimized interface.
+    It automatically tries multiple search strategies to maximize the chance of finding each requested field.
+    
+    Parameters:
+    - name: Drug name (brand or generic, required if NDC not provided)
+    - ndc: NDC code (optional, used first if present)
+    - fields: Comma-separated label fields to retrieve (or leave blank for all important sections)
+    - ndc_limit: Number of NDCs to try per name if needed
+    - last_ditch: Try a final _exists_ search if all else fails
+    
+    Returns:
+    - For each field: content, which NDC found it, all NDCs tried, search strategy, and all available sections from that label.
+    """
+    if not name and not ndc:
+        raise HTTPException(status_code=400, detail="Either 'name' or 'ndc' must be provided")
+    
+    # Parse requested fields or use all important ones if none specified
+    requested_fields = []
+    if fields:
+        requested_fields = [f.strip().lower().replace(" ", "_") for f in fields.split(",") if f.strip()]
+    
+    if not requested_fields:
+        requested_fields = IMPORTANT_LABEL_SECTIONS
+    
+    # Track global information about the search
+    all_ndcs_tried = set()
+    field_results = []
+    drug_name = name or "Unknown"
+    
+    logger.info(f"LLM label discover request - name: '{name}', ndc: '{ndc}', fields: {requested_fields}")
+    
+    try:
+        # STEP 1: Build list of NDCs to try
+        candidate_ndcs = []
+        
+        # If specific NDC provided, use it first
+        if ndc:
+            # Clean NDC format
+            ndc_clean = ndc.replace("-", "")
+            candidate_ndcs.append(ndc_clean)
+            all_ndcs_tried.add(ndc_clean)
+        
+        # Then try NDCs looked up by name
+        if name:
+            name_ndcs = await lookup_ndcs_for_name(name, limit=ndc_limit)
+            for name_ndc in name_ndcs:
+                if name_ndc not in candidate_ndcs:
+                    candidate_ndcs.append(name_ndc)
+                    all_ndcs_tried.add(name_ndc)
+        
+        # If we have no NDCs at all, fail early
+        if not candidate_ndcs:
+            if name:
+                raise HTTPException(status_code=404, detail=f"No NDCs found for drug '{name}'")
+            else:
+                raise HTTPException(status_code=404, detail=f"Invalid NDC: {ndc}")
+        
+        # STEP 2: Process each requested field
+        for field in requested_fields:
+            field_result = FieldResult(
+                field=field,
+                found=False,
+                ndcs_tried=[]  
+            )
+            
+            # Try each NDC for this field
+            for candidate_ndc in candidate_ndcs:
+                field_result.ndcs_tried.append(candidate_ndc)
+                
+                try:
+                    result = await try_label_for_field(candidate_ndc, field)
+                    
+                    if result:
+                        # We found the field in this NDC's label!
+                        label = result["label"]
+                        field_result.found = True
+                        field_result.content = result["content"]
+                        field_result.ndc = candidate_ndc
+                        field_result.search_strategy = f"NDC lookup: {candidate_ndc}"
+                        
+                        # Extract drug name if better than what we have
+                        if "openfda" in label and "brand_name" in label["openfda"] and label["openfda"]["brand_name"]:
+                            drug_name = label["openfda"]["brand_name"][0]
+                        
+                        # Get all sections from this label
+                        field_result.all_sections = extract_all_sections(label)
+                        field_result.message = f"Found {field} using NDC {candidate_ndc}"
+                        break
+                except Exception as e:
+                    logger.warning(f"Error checking field {field} for NDC {candidate_ndc}: {str(e)}")
+            
+            # If field not found in any NDC, try last-ditch _exists_ search
+            if not field_result.found and last_ditch:
+                try:
+                    logger.info(f"Trying last-ditch _exists_ search for field '{field}'")
+                    
+                    # URL encode the query for the specific field using _exists_
+                    query = f'_exists_:{field}'
+                    
+                    # Add name filter if available
+                    if name:
+                        query += f' AND openfda.brand_name:"{name.upper()}"'
+                    
+                    encoded_query = urllib.parse.quote_plus(query)
+                    url = f"https://api.fda.gov/drug/label.json?search={encoded_query}&limit=1"
+                    
+                    # Add API key if available
+                    api_key = get_api_key("FDA_API_KEY")
+                    if api_key:
+                        url += f"&api_key={api_key}"
+                    
+                    result = await make_request(url)
+                    
+                    if result and "results" in result and result["results"]:
+                        label = result["results"][0]
+                        
+                        # If the field exists
+                        if field in label and label[field]:
+                            field_result.found = True
+                            content = label[field]
+                            if isinstance(content, list):
+                                content = " ".join(content)
+                            field_result.content = content
+                            field_result.search_strategy = f"_exists_ search: {field}"
+                            
+                            # Extract NDC if available
+                            if "openfda" in label and "product_ndc" in label["openfda"] and label["openfda"]["product_ndc"]:
+                                field_result.ndc = label["openfda"]["product_ndc"][0]
+                                all_ndcs_tried.add(field_result.ndc)
+                                field_result.ndcs_tried.append(field_result.ndc)
+                            
+                            # Extract drug name if better than what we have
+                            if "openfda" in label and "brand_name" in label["openfda"] and label["openfda"]["brand_name"]:
+                                drug_name = label["openfda"]["brand_name"][0]
+                            
+                            # Get all sections from this label
+                            field_result.all_sections = extract_all_sections(label)
+                            field_result.message = f"Found {field} using last-ditch _exists_ search"
+                except Exception as e:
+                    logger.warning(f"Last-ditch search failed for field {field}: {str(e)}")
+            
+            # If still not found, add field result with failure info
+            if not field_result.found:
+                field_result.message = f"Field {field} not found after trying {len(field_result.ndcs_tried)} NDCs"
+            
+            # Add result for this field
+            field_results.append(field_result)
+        
+        # STEP 3: Build the final response
+        found_count = sum(1 for r in field_results if r.found)
+        message = f"Found {found_count} out of {len(requested_fields)} requested fields. Tried {len(all_ndcs_tried)} NDCs."
+        
+        return LLMLabelDiscoverResponse(
+            success=found_count > 0,
+            drug_name=drug_name,
+            fields=field_results,
+            message=message
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in LLM label discover: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving label data: {str(e)}")
+
