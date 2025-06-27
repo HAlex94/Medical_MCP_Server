@@ -4,7 +4,7 @@ Therapeutic Equivalence Routes
 Specialized routes for retrieving therapeutic equivalence data from FDA APIs,
 designed for consistent LLM consumption.
 """
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Union
 from fastapi import APIRouter, Query, HTTPException
 import httpx
 import os
@@ -702,7 +702,9 @@ async def get_therapeutic_equivalence(
         if group_by_te_code and filtered_products:
             response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) across {len(grouped_products)} TE code(s)"
             if reference_product:
-                response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) across {len(grouped_products)} TE code(s) for {reference_product.name} (NDC: {reference_product.ndc})"
+                ref_name = reference_product.get('brand_name') if isinstance(reference_product, dict) else reference_product.name
+                ref_ndc = reference_product.get('ndc') if isinstance(reference_product, dict) else reference_product.ndc
+                response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) across {len(grouped_products)} TE code(s) for {ref_name} (NDC: {ref_ndc})"
             
             # Add pagination warning if applicable
             if pagination_warning:
@@ -752,7 +754,9 @@ async def get_therapeutic_equivalence(
         else:
             response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s)"
             if reference_product:
-                response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) for {reference_product.name} (NDC: {reference_product.ndc})"
+                ref_name = reference_product.get('brand_name') if isinstance(reference_product, dict) else reference_product.name
+                ref_ndc = reference_product.get('ndc') if isinstance(reference_product, dict) else reference_product.ndc
+                response_msg = f"Found {len(filtered_products)} therapeutically equivalent product(s) for {ref_name} (NDC: {ref_ndc})"
             
             # Add pagination warning if applicable
             if pagination_warning:
@@ -816,7 +820,8 @@ async def get_therapeutic_equivalence(
                 te_code_summary = ", ".join([f"{code}: {len(prods)}" for code, prods in grouped_products.items()])
                 response.message += f". Grouped by TE code: {te_code_summary}"
         
-        logger.info(f"Found reference product: {reference_product['brand_name']} with {len(filtered_products)} equivalent products after filtering")
+        ref_name = reference_product.get('brand_name') if isinstance(reference_product, dict) else reference_product.name
+        logger.info(f"Found reference product: {ref_name} with {len(filtered_products)} equivalent products after filtering")
         return response
     except Exception as e:
         logger.error(f"Error getting therapeutic equivalence: {str(e)}", exc_info=True)

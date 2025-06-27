@@ -5,7 +5,7 @@ Specialized routes for retrieving comprehensive drug label information from FDA 
 designed for consistent LLM consumption with intelligent fallback mechanisms.
 """
 from typing import List, Dict, Any, Optional, Union, Set
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 import os
 import logging
 import urllib.parse
@@ -63,6 +63,7 @@ class LabelSection(BaseModel):
     """Model for a section of a drug label"""
     name: str
     content: str
+    metadata: Optional[Dict[str, Any]] = None
 
 class DrugLabelResponse(BaseModel):
     """Response model for drug label information"""
