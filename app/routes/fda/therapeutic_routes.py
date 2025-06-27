@@ -4,7 +4,7 @@ Therapeutic Equivalence Routes
 Specialized routes for retrieving therapeutic equivalence data from FDA APIs,
 designed for consistent LLM consumption.
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import APIRouter, Query, HTTPException
 import httpx
 import os
@@ -15,7 +15,68 @@ from app.utils.api_clients import make_request
 from app.utils.api_clients import get_api_key
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.routes.fda")
+
+
+async def get_ndc_from_name(name: str) -> Optional[str]:
+    """
+    Get a product NDC for a given drug name using multiple search strategies
+    This helps bridge the gap between drug names and the more reliable NDC-based searches
+    
+    Args:
+        name: Drug name to search for
+        
+    Returns:
+        First matching product_ndc or None if not found
+    """
+    if not name:
+        return None
+    
+    # Try multiple case variants
+    name_up = name.upper()
+    name_title = name.title()
+    
+    # Ordered search strategies
+    search_queries = [
+        (f'brand_name:"{name_up}"', "Brand name uppercase"),
+        (f'generic_name:"{name_up}"', "Generic name uppercase"),
+        (f'brand_name:"{name_title}"', "Brand name titlecase"),
+        (f'generic_name:"{name_title}"', "Generic name titlecase"),
+        (f'brand_name:"{name}"', "Brand name original"),
+    ]
+    
+    # Try first word only if it's a multi-word name
+    first_word = name.split()[0] if len(name.split()) > 1 else None
+    if first_word:
+        search_queries.append((f'brand_name:"{first_word.upper()}"', "Brand name first word"))
+        search_queries.append((f'generic_name:"{first_word.upper()}"', "Generic name first word"))
+    
+    # Build FDA NDC API endpoint
+    base_url = "https://api.fda.gov/drug/ndc.json"
+    
+    for query, strategy in search_queries:
+        try:
+            # Build query with API key if available
+            url = f"{base_url}?search={query}&limit=1"
+            api_key = get_api_key("FDA_API_KEY")
+            if api_key:
+                url += f"&api_key={api_key}"
+                
+            logger.info(f"Searching NDC directory with strategy: {strategy} - {query}")
+            result = await make_request(url)
+            
+            if result and "results" in result and result["results"]:
+                # Extract the product_ndc from the first result
+                ndc = result["results"][0].get("product_ndc")
+                if ndc:
+                    logger.info(f"Found NDC {ndc} using strategy: {strategy}")
+                    return ndc
+        except Exception as e:
+            logger.warning(f"NDC lookup failed for {strategy}: {str(e)}")
+            continue
+    
+    logger.warning(f"No NDC found for drug name: {name}")
+    return None
 
 # Models for the response
 class EquivalentProduct(BaseModel):
@@ -40,6 +101,8 @@ class TherapeuticEquivalenceResponse(BaseModel):
     reference_product: Optional[EquivalentProduct] = None
     equivalent_products: List[EquivalentProduct] = []
     message: Optional[str] = None
+    search_method: Optional[str] = None
+    search_attempts: Optional[List[str]] = []
 
 async def find_reference_product(name=None, active_ingredient=None, ndc=None):
     """Find a reference product using different search strategies with enhanced fallback logic"""
@@ -395,51 +458,71 @@ async def get_therapeutic_equivalence(
     try:
         logger.info(f"Therapeutic equivalence request - name: '{name}', ndc: '{ndc}', active_ingredient: '{active_ingredient}'")
         
-        # Clean up input parameters
-        if name:
-            name = name.strip()
-            # If name has generic notation like "Drug Name (active ingredient)", extract both parts
-            if '(' in name and ')' in name:
-                potential_active = name[name.find('(')+1:name.find(')')].strip()
-                if potential_active and not active_ingredient:
-                    active_ingredient = potential_active
-                    logger.info(f"Extracted active ingredient '{active_ingredient}' from name '{name}'")
-                name = name[:name.find('(')].strip()
-                logger.info(f"Extracted clean name: '{name}'")
+        # Track which search strategy ultimately succeeded
+        successful_strategy = ""
+        search_trail = []
         
+        # STEP 1: Try with NDC first if provided (most reliable lookup)
+        reference_product = None
         if ndc:
-            # Normalize NDC format (remove dashes if present)
-            ndc = ndc.replace("-", "")
+            search_trail.append(f"Direct NDC search: {ndc}")
+            reference_product = await find_reference_product(None, None, ndc)
+            if reference_product:
+                successful_strategy = "Direct NDC search"
         
-        # First, find the reference product
-        reference_product = await find_reference_product(name, active_ingredient, ndc)
-        
-        if not reference_product:
-            # If we failed with the name but have active ingredient, try with just the active ingredient
-            if name and active_ingredient and not ndc:
-                logger.info(f"Retrying with only active ingredient: {active_ingredient}")
-                reference_product = await find_reference_product(None, active_ingredient, None)
+        # STEP 2: If no direct NDC match but name provided, try to get NDC from name
+        if not reference_product and name:
+            search_trail.append(f"Chained NDC lookup from name: {name}")
+            derived_ndc = await get_ndc_from_name(name)
             
-            # If we still don't have a reference product, try to normalize the name
-            if not reference_product and name:
-                # Remove common suffixes like tabs, capsules, etc.
-                suffixes = [" tabs", " tab", " capsules", " capsule", " injection", " oral", 
-                           " cream", " ointment", " solution", " powder", " tablet"]
-                cleaned_name = name.lower()
-                for suffix in suffixes:
-                    if cleaned_name.endswith(suffix):
-                        cleaned_name = cleaned_name[:-len(suffix)].strip()
-                        break
+            if derived_ndc:
+                logger.info(f"Found NDC {derived_ndc} via name lookup for {name}")
+                search_trail.append(f"Using derived NDC: {derived_ndc}")
                 
-                if cleaned_name != name.lower():
-                    logger.info(f"Trying with normalized name: {cleaned_name}")
-                    reference_product = await find_reference_product(cleaned_name, active_ingredient, ndc)
+                # Try looking up products using the derived NDC
+                reference_product = await find_reference_product(None, None, derived_ndc)
+                if reference_product:
+                    successful_strategy = "Derived NDC from name"
         
+        # STEP 3: If still no match, try with the original name search
+        if not reference_product and name:
+            search_trail.append(f"Name-based search: {name}")
+            reference_product = await find_reference_product(name, active_ingredient, None)
+            if reference_product:
+                successful_strategy = "Name search"
+        
+        # STEP 4: If still no match but have active ingredient, try that
+        if not reference_product and active_ingredient:
+            search_trail.append(f"Active ingredient search: {active_ingredient}")
+            reference_product = await find_reference_product(None, active_ingredient, None)
+            if reference_product:
+                successful_strategy = "Active ingredient search"
+            
+        # STEP 5: Try name normalization for common drug form suffixes 
+        if not reference_product and name:
+            # Remove common suffixes like tabs, capsules, etc.
+            suffixes = [" tabs", " tab", " capsules", " capsule", " injection", " oral", 
+                       " cream", " ointment", " solution", " powder", " tablet"]
+            cleaned_name = name.lower()
+            for suffix in suffixes:
+                if cleaned_name.endswith(suffix):
+                    cleaned_name = cleaned_name[:-len(suffix)].strip()
+                    break
+            
+            if cleaned_name != name.lower():
+                search_trail.append(f"Normalized name search: {cleaned_name}")
+                logger.info(f"Trying with normalized name: {cleaned_name}")
+                reference_product = await find_reference_product(cleaned_name, active_ingredient, None)
+                if reference_product:
+                    successful_strategy = "Normalized name search"
+        
+        # If we couldn't find a reference product after all attempts
         if not reference_product:
-            logger.warning("Could not find reference product after all attempts")
+            search_attempts = ", ".join(search_trail)
+            logger.warning(f"Could not find reference product after all attempts: {search_attempts}")
             return TherapeuticEquivalenceResponse(
                 success=False,
-                message=f"Could not find reference product for {name or active_ingredient or ndc}",
+                message=f"Could not find reference product for {name or active_ingredient or ndc} after trying: {search_attempts}",
                 reference_product=None,
                 equivalent_products=[]
             )
@@ -461,7 +544,9 @@ async def get_therapeutic_equivalence(
             te_codes=[reference_product.get('te_code')] if reference_product.get('te_code') else [],
             reference_drug=reference_product.get('reference_drug', False),
             reference_product=EquivalentProduct(**reference_product) if isinstance(reference_product, dict) else reference_product,
-            equivalent_products=equivalent_products
+            equivalent_products=equivalent_products,
+            search_method=successful_strategy,
+            search_attempts=search_trail
         )
         
         # Add appropriate message
