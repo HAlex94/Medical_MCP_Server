@@ -144,6 +144,76 @@ async def list_resources(request: Request):
                 )
             ),
             
+            # FDA Orange Book Therapeutic Equivalence Search
+            Resource(
+                uri="fda/orange-book/search",
+                name="FDA Orange Book Search",
+                description="Search the FDA Orange Book for drug products and their therapeutic equivalence ratings (AB ratings)",
+                function=FunctionDef(
+                    name="searchOrangeBook",
+                    description="Search the FDA Orange Book for therapeutic equivalence data - RECOMMENDED for therapeutic equivalence queries",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Drug name (brand or generic)"
+                            },
+                            "active_ingredient": {
+                                "type": "string",
+                                "description": "Active ingredient to search for"
+                            },
+                            "appl_no": {
+                                "type": "string",
+                                "description": "Application number"
+                            },
+                            "ndc": {
+                                "type": "string",
+                                "description": "NDC code"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return",
+                                "default": 10
+                            }
+                        }
+                    }
+                )
+            ),
+            
+            # Bulk NDC Search for Complete Coverage
+            Resource(
+                uri="pharmacy/bulk_ndc_search",
+                name="Bulk NDC Search",
+                description="Retrieve comprehensive NDC data with multi-page results aggregation for complete coverage",
+                function=FunctionDef(
+                    name="bulkNdcSearch",
+                    description="Get complete list of all NDCs for a medication - use this for CSV exports or when all product variations are needed",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Brand or generic name of the drug"
+                            },
+                            "active_ingredient": {
+                                "type": "string",
+                                "description": "Active ingredient in the drug"
+                            },
+                            "manufacturer": {
+                                "type": "string",
+                                "description": "Name of the manufacturer"
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "Maximum number of total results to return",
+                                "default": 1000
+                            }
+                        }
+                    }
+                )
+            ),
+            
             # Enhanced NDC Lookup
             Resource(
                 uri="pharmacy/ndc_lookup",

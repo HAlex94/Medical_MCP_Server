@@ -2,7 +2,100 @@
 
 > 📝 **NOTE:** This document is maintained by AI for AI. It contains detailed technical changes, issue tracking, and progress information specifically formatted for AI assistants to reference efficiently.
 
-## Latest Update: FDA API Test Script Reorganization & Therapeutic Equivalence Fix (2025-06-28)
+## Latest Update: Drug Name Misspelling & Therapeutic Equivalence Enhancements (2025-06-28)
+
+Enhanced system prompt with multiple improvements for drug information retrieval:
+
+### 🔍 Drug Name Misspelling Detection
+
+- **User Error Prevention**: Added comprehensive guidance for handling misspelled drug names
+  - Instructs AI to proactively check for potential spelling errors in drug queries
+  - Requires suggesting corrections before proceeding with searches (e.g., "Did you mean quinapril instead of quinioril?")
+  - Provides examples of common misspelling categories (brand vs. generic, salt forms, combinations)
+  - Ensures more accurate search results and prevents "not found" errors due to typos
+
+### 🔍 Therapeutic Equivalence Workflow Addition
+
+- **New Functionality**: Added dedicated workflow section for therapeutic equivalence queries in system prompt
+  - Provides step-by-step instructions for checking drug substitution possibilities
+  - **Added explicit warning** to NOT use the problematic `/fda/therapeutic-equivalence` endpoints
+  - Directs AI to ONLY use `/fda/orange-book/search` endpoint for reliable TE data
+  - Includes guidance for comparing multiple drugs and interpreting TE codes
+
+### 📝 Implementation Details
+
+- **Endpoint Selection**: Identified the most reliable endpoint for therapeutic equivalence data
+  - Confirmed `/fda/orange-book/search` provides consistent results with TE codes
+  - Avoided the direct therapeutic equivalence endpoint that returned errors in testing
+  - Added example query format and interpretation guidance
+
+### 🔧 OpenAPI Schema Update
+
+- **Schema Modification**: Updated `chatgpt_action_schema_final.json` to align with system prompt guidance
+  - Marked `/fda/therapeutic-equivalence` endpoint as formally `deprecated` in the schema
+  - Updated its description to explicitly warn against its use
+  - Enhanced `/fda/orange-book/search` endpoint description to identify it as the **RECOMMENDED ENDPOINT**
+  - Added clear guidance about endpoint reliability directly in the API schema
+
+### 🔄 Plugin Interface Fix for Orange Book Endpoint
+
+- **Critical Plugin Interface Fix**: Added `searchOrangeBook` operation to the plugin interface
+  - Registered the operation in the MCP handler to expose it via the plugin interface
+  - Restored the full therapeutic equivalence workflow instructions
+  - Added comprehensive parameters for the operation (name, active_ingredient, ndc, etc.)
+  - Enhanced response parsing guidance for all response formats
+  - Maintained the prohibition against using the deprecated `getDrugEquivalence` operation
+
+### 💾 Added Bulk NDC Search for Complete Data Retrieval
+
+- **New Feature**: Implemented `bulkNdcSearch` operation for comprehensive NDC data retrieval
+  - Created a new endpoint `/pharmacy/bulk_ndc_search` with pagination support
+  - Added multi-page aggregation to overcome FDA API pagination limitations
+  - Supports retrieving up to 1000 NDCs per query
+  - Specifically designed for CSV exports and complete medication data needs
+  - Exposes parameters for drug name, active ingredient, and manufacturer filtering
+
+### 🔐 Search Restriction Implementation
+
+- **Critical Constraint**: Added prominent rules at the beginning of the system prompt:
+  - Added explicit instruction to NEVER perform web searches unless explicitly requested
+  - Added requirement to STATE when information is unavailable rather than generating it
+  - Enhanced formatting with numbered critical rules for clearer instruction hierarchy
+
+### 🔧 Testing Confirmation
+
+- **Verification**: Tested workflow with lisinopril vs. valsartan comparison
+  - Successfully retrieved Orange Book data with TE codes
+  - Confirmed proper identification of non-equivalent medications
+  - Verified AI can correctly interpret AB ratings and substitution criteria
+
+## Previous Update: FDA Label-Info API Workflow Fix (2025-06-28)
+
+Resolved critical issues in the system prompt's workflow for querying drug label information:
+
+### 🔍 Endpoint Query Method Fix
+
+- **Issue Fixed**: Resolved "Not Found" errors when requesting FDA drug label data for common medications
+  - Identified incorrect workflow in system prompt that was causing queries to fail
+  - Discovered `/fda/v3/label-info` endpoint only accepts direct drug name queries, not NDCs
+  - Removed NDC-based approach that was causing failures
+
+### 📝 System Prompt Optimization
+
+- **Updated Workflow**: Streamlined drug label query process in `system_pormpt.txt`
+  - Simplified to direct drug name queries only (e.g., `/fda/v3/label-info?name=metoprolol`)
+  - Added fallback logic for trying alternative drug name forms
+  - Removed misleading NDC-based query instructions
+  - Verified working with multiple test medications
+
+### 🔧 Technical Details
+
+- **Query Testing**: Confirmed working queries with multiple medications including:
+  - Metformin, Lisinopril, Atorvastatin
+  - Successfully retrieved comprehensive label data including all sections
+  - Validated end-to-end workflow for information retrieval
+
+## Previous Update: FDA API Test Script Reorganization & Therapeutic Equivalence Fix (2025-06-28)
 
 Reorganized FDA API test scripts and fixed critical therapeutic equivalence endpoint issue:
 

@@ -384,9 +384,10 @@
   },
   "/fda/therapeutic-equivalence": {
       "get": {
+        "deprecated": true,
         "operationId": "getDrugEquivalence",
-        "summary": "Get therapeutic equivalence information for drugs",
-        "description": "Retrieve comprehensive therapeutic equivalence data including AB ratings and equivalent products in a single call. This is the recommended endpoint for checking if drugs are therapeutically equivalent.",
+        "summary": "[DEPRECATED] Get therapeutic equivalence information for drugs",
+        "description": "[DEPRECATED - DO NOT USE] This endpoint has reliability issues and often fails to find reference products. Use /fda/orange-book/search instead for reliable therapeutic equivalence data.",
         "parameters": [
           {
             "name": "name",
@@ -902,11 +903,172 @@
       }
     }
   },
+  "/pharmacy/bulk_ndc_search": {
+    "get": {
+      "operationId": "bulkNdcSearch",
+      "summary": "Comprehensive NDC search with multi-page aggregation",
+      "description": "Retrieves complete NDC listings for medications, overcoming pagination limitations. Designed for CSV exports and bulk data retrieval with up to 1000 results.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Brand or generic name of the drug",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "active_ingredient",
+          "in": "query",
+          "description": "Active ingredient in the drug",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "manufacturer",
+          "in": "query",
+          "description": "Name of the manufacturer",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "max_results",
+          "in": "query",
+          "description": "Maximum number of total results to return",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 1000
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with complete NDC product information",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "Original search query used"
+                  },
+                  "total_results": {
+                    "type": "integer",
+                    "description": "Total number of results in the database"
+                  },
+                  "displayed_results": {
+                    "type": "integer",
+                    "description": "Number of results returned in this response"
+                  },
+                  "complete": {
+                    "type": "boolean",
+                    "description": "Whether all available results were retrieved"
+                  },
+                  "products": {
+                    "type": "array",
+                    "description": "List of drug products matching the search criteria",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "product_ndc": {
+                          "type": "string",
+                          "description": "Product-level NDC"
+                        },
+                        "brand_name": {
+                          "type": "string",
+                          "description": "Brand name of the product"
+                        },
+                        "generic_name": {
+                          "type": "string",
+                          "description": "Generic name of the product"
+                        },
+                        "dosage_form": {
+                          "type": "string",
+                          "description": "Dosage form (tablet, capsule, etc.)"
+                        },
+                        "route": {
+                          "type": "string",
+                          "description": "Administration route"
+                        },
+                        "marketing_status": {
+                          "type": "string",
+                          "description": "Marketing status of the product"
+                        },
+                        "packaging": {
+                          "type": "array",
+                          "description": "Package-level details including NDCs",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "package_ndc": {
+                                "type": "string",
+                                "description": "Package-level NDC (for CSV output)"
+                              },
+                              "description": {
+                                "type": "string",
+                                "description": "Package description"
+                              },
+                              "marketing_start_date": {
+                                "type": "string",
+                                "description": "Date when marketing started"
+                              },
+                              "sample": {
+                                "type": "boolean",
+                                "description": "Whether this is a sample package"
+                              }
+                            }
+                          }
+                        },
+                        "active_ingredients": {
+                          "type": "array",
+                          "description": "List of active ingredients",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "description": "Name of active ingredient"
+                              },
+                              "strength": {
+                                "type": "string",
+                                "description": "Strength of active ingredient"
+                              }
+                            }
+                          }
+                        },
+                        "manufacturer_name": {
+                          "type": "string",
+                          "description": "Name of the manufacturer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad request - missing required parameters"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
   "/fda/orange-book/search": {
     "get": {
       "operationId": "searchOrangeBook",
-      "summary": "Search FDA Orange Book for drug products",
-      "description": "Search the FDA Orange Book to find drug products and their therapeutic equivalence ratings (AB ratings).",
+      "summary": "Search FDA Orange Book for drug products and therapeutic equivalence",
+      "description": "RECOMMENDED ENDPOINT for therapeutic equivalence queries. Search the FDA Orange Book to find drug products and their therapeutic equivalence ratings (AB ratings). This is the most reliable endpoint for determining if drugs have therapeutic equivalence.",
       "parameters": [
         {
           "name": "name",
