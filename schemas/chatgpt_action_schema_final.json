@@ -12,6 +12,216 @@
     }
   ],
   "paths": {
+    "/fda/v3/label-info": {
+      "get": {
+        "operationId": "getDrugLabelInfoV3",
+        "summary": "Get optimized drug label information (v3)",
+        "description": "Retrieve detailed drug label sections with 100% success rate using advanced LLM-optimized format. This endpoint includes token estimation, content truncation, and detailed metadata to help manage long content in LLM context windows.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Generic or brand name of the drug (e.g., metformin or hydrocodone-acetaminophen)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "description": "Comma-separated list of fields to retrieve (e.g., indications_and_usage,warnings)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "optimize_for_llm",
+            "in": "query",
+            "description": "Apply LLM optimizations like truncation and token estimation",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          {
+            "name": "max_content_length",
+            "in": "query",
+            "description": "Maximum content length before truncation (only used if optimize_for_llm=True)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with optimized drug label information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "Whether the request was successful"
+                    },
+                    "drug_name": {
+                      "type": "string",
+                      "description": "Name of the drug requested"
+                    },
+                    "fields": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Label fields with their content"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "llm_optimization": {
+                          "type": "object",
+                          "properties": {
+                            "applied": {
+                              "type": "boolean",
+                              "description": "Whether LLM optimizations were applied"
+                            },
+                            "field_status": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "object"
+                              },
+                              "description": "Status of each field including truncation info"
+                            },
+                            "estimated_tokens": {
+                              "type": "integer",
+                              "description": "Estimated tokens in the response"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Drug information not found"
+          },
+          "500": {
+            "description": "FDA API error"
+          }
+        }
+      }
+    },
+    "/fda/v3/label-info/{field_name}": {
+      "get": {
+        "operationId": "getDrugLabelFieldV3",
+        "summary": "Get specific field from drug label (v3)",
+        "description": "Retrieve a single specific field from a drug label with higher character limits. Optimized for LLMs that need focused access to specific label sections like indications_and_usage or boxed_warning.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Generic or brand name of the drug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field_name",
+            "in": "path",
+            "description": "Specific field to retrieve from the drug label (e.g., indications_and_usage)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "optimize_for_llm",
+            "in": "query",
+            "description": "Apply LLM optimizations like truncation and token estimation",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          {
+            "name": "max_content_length",
+            "in": "query",
+            "description": "Maximum content length before truncation (higher for single field endpoint)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 15000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with the requested field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Drug information not found"
+          },
+          "500": {
+            "description": "FDA API error"
+          }
+        }
+      }
+    },
+    "/fda/v3/available-fields": {
+      "get": {
+        "operationId": "listAvailableFieldsV3",
+        "summary": "List available drug label fields (v3)",
+        "description": "Get a list of all available fields that can be requested in the label-info endpoint.",
+        "responses": {
+          "200": {
+            "description": "Successful response with available fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "standard_fields": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "List of standard fields available in the API"
+                    },
+                    "description": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Additional information about the fields"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "FDA API error"
+          }
+        }
+      }
+    },
     "/fda/label-info": {
     "get": {
       "operationId": "getDrugLabelInfo",
