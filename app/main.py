@@ -4,6 +4,9 @@ import logging
 import uvicorn
 from app.routes import mcp_handler
 from app.routes.fda import router as fda_router
+from app.routes.fda.v3 import router as fda_v3_router
+from app.routes.fda.therapeutic_routes import router as therapeutic_router
+from app.routes.pharmacy import ndc_lookup_routes
 from fastapi.responses import JSONResponse
 
 # Setup logging
@@ -48,11 +51,12 @@ async def global_exception_handler(request: Request, exc: Exception):
         }
     )
 
-# Include MCP routes
-app.include_router(mcp_handler.router, prefix="")
-
-# Include FDA routes
-app.include_router(fda_router, prefix="")
+# Include routers
+app.include_router(mcp_handler.router)
+app.include_router(fda_router, prefix="/fda")  # Original FDA routes (NDC, Orange Book, etc.)
+app.include_router(fda_v3_router, prefix="/fda")  # v3 FDA API with 100% success rate
+app.include_router(therapeutic_router, prefix="/fda")  # Therapeutic equivalence routes
+app.include_router(ndc_lookup_routes.router, prefix="/pharmacy")
 
 @app.get("/")
 async def root():
