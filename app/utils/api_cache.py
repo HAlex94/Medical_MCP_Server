@@ -18,15 +18,26 @@ logger = logging.getLogger(__name__)
 # Default cache settings
 # Use /tmp for cloud environments like Render where app directories may not be writable
 # Check if we're in a cloud environment first (Render sets this)
-if os.environ.get("RENDER", False):
+RENDER_ENV = os.environ.get("RENDER", "false").lower() == "true"
+
+if RENDER_ENV:
     DEFAULT_CACHE_DIR = "/tmp/medical_mcp_cache"
 else:
     DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
     
+# Emergency fallback if neither location is writable
+EMERGENCY_CACHE_DIR = "/tmp/emergency_medical_mcp_cache"
+
 DEFAULT_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days in seconds
 
 # Allow disabling cache entirely
 CACHE_ENABLED = os.environ.get("ENABLE_API_CACHE", "true").lower() == "true"
+
+# Force disable caching on Render if requested
+EMERGENCY_UNCACHED = RENDER_ENV or os.environ.get("EMERGENCY_UNCACHED", "false").lower() == "true"
+if EMERGENCY_UNCACHED:
+    logger.warning("Emergency uncached mode active - all API caching disabled")
+    CACHE_ENABLED = False
 
 # Memory cache for frequently accessed items
 _memory_cache = {}
@@ -53,8 +64,36 @@ class ApiCache:
         self.ttl_seconds = ttl_seconds or int(os.environ.get("CACHE_TTL_SECONDS", str(DEFAULT_CACHE_TTL)))
         self.service_name = service_name
         
-        # Ensure cache directory exists
-        os.makedirs(self.cache_dir, exist_ok=True)
+        # Try to create cache directory and test if writable
+        self.cache_dir_usable = False
+        if CACHE_ENABLED and not EMERGENCY_UNCACHED:
+            try:
+                # Ensure cache directory exists
+                os.makedirs(self.cache_dir, exist_ok=True)
+                # Test if we can write to it
+                test_file = os.path.join(self.cache_dir, "_test_write")
+                with open(test_file, "w") as f:
+                    f.write("test")
+                os.remove(test_file)
+                self.cache_dir_usable = True
+            except (PermissionError, OSError) as e:
+                # Try emergency fallback
+                logger.warning(f"Cannot use primary cache directory {self.cache_dir}: {str(e)}")
+                try:
+                    self.cache_dir = EMERGENCY_CACHE_DIR
+                    os.makedirs(self.cache_dir, exist_ok=True)
+                    # Test if we can write to fallback
+                    test_file = os.path.join(self.cache_dir, "_test_write")
+                    with open(test_file, "w") as f:
+                        f.write("test")
+                    os.remove(test_file)
+                    self.cache_dir_usable = True
+                    logger.info(f"Using emergency cache directory: {self.cache_dir}")
+                except (PermissionError, OSError) as e2:
+                    logger.error(f"Cannot use emergency cache directory either: {str(e2)}")
+                    logger.warning("Cache operations will be disabled due to permission issues")
+        elif EMERGENCY_UNCACHED:
+            logger.info("Cache creation skipped - emergency uncached mode active")
         
     def _get_cache_key(self, endpoint: str, params: Dict[str, Any]) -> str:
         """
@@ -157,7 +196,11 @@ class ApiCache:
         # Update memory cache
         _memory_cache[cache_key] = (data, timestamp)
         
-        # Update file cache
+        # Update file cache - only if cache directory is usable
+        if not self.cache_dir_usable:
+            logger.debug(f"Skipping disk cache write - directory not usable: {self.cache_dir}")
+            return
+            
         try:
             # Ensure cache directory exists (might have been deleted or not created in cloud environments)
             os.makedirs(self.cache_dir, exist_ok=True)
