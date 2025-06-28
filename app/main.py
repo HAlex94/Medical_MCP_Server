@@ -2,11 +2,12 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import uvicorn
-from app.routes import mcp_handler
-from app.routes.fda import router as fda_router
-from app.routes.fda.v3 import router as fda_v3_router
-from app.routes.fda.therapeutic_routes import router as therapeutic_router
-from app.routes.pharmacy import router as pharmacy_router
+# Temporarily comment out problematic imports until we get a clean boot
+# from app.routes import mcp_handler
+# from app.routes.fda import router as fda_router
+# from app.routes.fda.v3 import router as fda_v3_router
+# from app.routes.fda.therapeutic_routes import router as therapeutic_router
+# from app.routes.pharmacy import router as pharmacy_router
 from fastapi.responses import JSONResponse
 
 # Setup logging
@@ -51,12 +52,12 @@ async def global_exception_handler(request: Request, exc: Exception):
         }
     )
 
-# Include routers
-app.include_router(mcp_handler.router)
-app.include_router(fda_router, prefix="/fda")  # Original FDA routes (NDC, Orange Book, etc.)
-app.include_router(fda_v3_router, prefix="/fda")  # v3 FDA API with 100% success rate
-app.include_router(therapeutic_router, prefix="/fda")  # Therapeutic equivalence routes
-app.include_router(pharmacy_router, prefix="/pharmacy")
+# Include routers - temporarily commented out
+# app.include_router(mcp_handler.router)
+# app.include_router(fda_router, prefix="/fda")  # Original FDA routes (NDC, Orange Book, etc.)
+# app.include_router(fda_v3_router, prefix="/fda")  # v3 FDA API with 100% success rate
+# app.include_router(therapeutic_router, prefix="/fda")  # Therapeutic equivalence routes
+# app.include_router(pharmacy_router, prefix="/pharmacy")
 
 @app.get("/")
 async def root():
