@@ -170,7 +170,47 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "drug_name": {
+                      "type": "string",
+                      "description": "Name of the drug requested"
+                    },
+                    "field_name": {
+                      "type": "string",
+                      "description": "Name of the requested field"
+                    },
+                    "content": {
+                      "type": "string",
+                      "description": "Content of the requested field"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "llm_optimization": {
+                          "type": "object",
+                          "properties": {
+                            "applied": {
+                              "type": "boolean",
+                              "description": "Whether LLM optimizations were applied"
+                            },
+                            "truncated": {
+                              "type": "boolean",
+                              "description": "Whether content was truncated"
+                            },
+                            "original_length": {
+                              "type": "integer",
+                              "description": "Original content length before truncation"
+                            },
+                            "estimated_tokens": {
+                              "type": "integer",
+                              "description": "Estimated tokens in the response"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
