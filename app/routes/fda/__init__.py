@@ -5,8 +5,8 @@ from .ndc_routes import router as ndc_router
 from .orange_book_routes import router as orange_book_router
 from .therapeutic_routes import router as therapeutic_router
 
-# Main FDA router
-router = APIRouter()  # Removed prefix here since it's already added in main.py
+# Main FDA router - prefix is added in main.py, do NOT add prefix here
+router = APIRouter()
 
 # Include active FDA-related routes
 # Note: Drug label routes are now handled by the v3 API (imported directly in main.py)

@@ -10,7 +10,7 @@ from app.utils.api_clients import make_api_request
 # Setup logging
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/fda", tags=["FDA"])
+router = APIRouter(tags=["FDA"])  # No prefix here - prefix is added in main.py
 
 class NDCSummaryResponse(BaseModel):
     total_results: int
