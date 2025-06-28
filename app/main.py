@@ -2,20 +2,39 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import uvicorn
-# Temporarily comment out problematic imports until we get a clean boot
-# from app.routes import mcp_handler
-# from app.routes.fda import router as fda_router
-# from app.routes.fda.v3 import router as fda_v3_router
-# from app.routes.fda.therapeutic_routes import router as therapeutic_router
-# from app.routes.pharmacy import router as pharmacy_router
+import importlib
+import sys
 from fastapi.responses import JSONResponse
 
-# Setup logging
+# Setup logging first so we can log import errors
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Define routers to be imported
+router_modules = {
+    "mcp_handler": "app.routes.mcp_handler",
+    "fda_router": "app.routes.fda",
+    "fda_v3_router": "app.routes.fda.v3",
+    "therapeutic_router": "app.routes.fda.therapeutic_routes",
+    "pharmacy_router": "app.routes.pharmacy"
+}
+
+# Import routers safely with error handling
+routers = {}
+for router_name, module_path in router_modules.items():
+    try:
+        module = importlib.import_module(module_path)
+        routers[router_name] = getattr(module, 'router')
+        logger.info(f"Successfully imported {router_name} from {module_path}")
+    except (ImportError, AttributeError) as e:
+        logger.error(f"Failed to import {router_name} from {module_path}: {str(e)}")
+        logger.error(f"Python path: {sys.path}")
+
+
+# Logger was already set up above
 
 # Create FastAPI application
 app = FastAPI(
@@ -52,12 +71,26 @@ async def global_exception_handler(request: Request, exc: Exception):
         }
     )
 
-# Include routers - temporarily commented out
-# app.include_router(mcp_handler.router)
-# app.include_router(fda_router, prefix="/fda")  # Original FDA routes (NDC, Orange Book, etc.)
-# app.include_router(fda_v3_router, prefix="/fda")  # v3 FDA API with 100% success rate
-# app.include_router(therapeutic_router, prefix="/fda")  # Therapeutic equivalence routes
-# app.include_router(pharmacy_router, prefix="/pharmacy")
+# Include routers with error handling
+if "mcp_handler" in routers:
+    app.include_router(routers["mcp_handler"])
+    logger.info("Included mcp_handler router")
+
+if "fda_router" in routers:
+    app.include_router(routers["fda_router"], prefix="/fda")  # Original FDA routes (NDC, Orange Book, etc.)
+    logger.info("Included fda_router with prefix /fda")
+
+if "fda_v3_router" in routers:
+    app.include_router(routers["fda_v3_router"], prefix="/fda")  # v3 FDA API with 100% success rate
+    logger.info("Included fda_v3_router with prefix /fda")
+
+if "therapeutic_router" in routers:
+    app.include_router(routers["therapeutic_router"], prefix="/fda")  # Therapeutic equivalence routes
+    logger.info("Included therapeutic_router with prefix /fda")
+
+if "pharmacy_router" in routers:
+    app.include_router(routers["pharmacy_router"], prefix="/pharmacy")
+    logger.info("Included pharmacy_router with prefix /pharmacy")
 
 @app.get("/")
 async def root():
