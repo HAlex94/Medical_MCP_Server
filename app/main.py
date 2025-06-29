@@ -98,6 +98,10 @@ if "therapeutic_router" in routers:
     app.include_router(routers["therapeutic_router"], prefix="/fda")  # Therapeutic equivalence routes
     logger.info("Included therapeutic_router with prefix /fda")
 
+if "dailymed_router" in routers:
+    app.include_router(routers["dailymed_router"], prefix="/fda")  # DailyMed fallback routes
+    logger.info("Included dailymed_router with prefix /fda")
+
 if "pharmacy_router" in routers:
     app.include_router(routers["pharmacy_router"], prefix="/pharmacy")
     logger.info("Included pharmacy_router with prefix /pharmacy")
