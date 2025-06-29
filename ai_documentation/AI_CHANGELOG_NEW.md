@@ -4,6 +4,7 @@
 
 ## Recent Changes (Last 10 entries)
 
+[2025-06-29] ➜ requirements.txt: Added beautifulsoup4 dependency required for DailyMed client
 [2025-06-29] ➜ app/main.py: Fixed DailyMed router inclusion in FastAPI app to enable endpoint registration
 [2025-06-29] ➜ app/routes/pharmacy/bulk_ndc_routes.py: Fixed Bulk NDC endpoint URL path from '/bulk_ndc_search' to '/bulk-ndc/search'
 [2025-06-28] ➜ app/utils/dailymed_client.py: Created new client utility for DailyMed API fallback integration
@@ -18,6 +19,11 @@
 ## Detailed Update History
 
 ### Deployment Fixes for DailyMed and Bulk NDC (2025-06-29)
+
+- **Added Missing Dependencies**:
+  - Added beautifulsoup4==4.12.2 to requirements.txt to fix DailyMed router import failure
+  - Identified and fixed ModuleNotFoundError for bs4 package in deployment logs
+  - Added specific version to ensure compatibility with existing code
 
 - **Fixed DailyMed Router Registration**:
   - Identified missing router inclusion in FastAPI app for DailyMed endpoints
