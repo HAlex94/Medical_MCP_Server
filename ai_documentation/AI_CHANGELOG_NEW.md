@@ -4,6 +4,8 @@
 
 ## Recent Changes (Last 10 entries)
 
+[2025-06-29] ➜ app/utils/dailymed_client.py: Fixed SPL data retrieval by adding proper Accept headers to avoid 415 errors
+[2025-06-29] ➜ app/routes/fda/ndc_routes.py: Added search_drug function required by DailyMed fallback functionality
 [2025-06-29] ➜ requirements.txt: Added beautifulsoup4 dependency required for DailyMed client
 [2025-06-29] ➜ app/main.py: Fixed DailyMed router inclusion in FastAPI app to enable endpoint registration
 [2025-06-29] ➜ app/routes/pharmacy/bulk_ndc_routes.py: Fixed Bulk NDC endpoint URL path from '/bulk_ndc_search' to '/bulk-ndc/search'
@@ -19,6 +21,16 @@
 ## Detailed Update History
 
 ### Deployment Fixes for DailyMed and Bulk NDC (2025-06-29)
+
+- **Fixed SPL Data Retrieval**:
+  - Added proper Accept headers to DailyMed client to fix 415 Unsupported Media Type errors
+  - Set "Accept: application/json" and "User-Agent" headers for all DailyMed API requests
+  - Resolved issue with DailyMed SPL data endpoint returning error responses
+
+- **Added Missing search_drug Function**:
+  - Implemented search_drug function in ndc_routes.py module
+  - Function enables drug information retrieval via OpenFDA before falling back to DailyMed
+  - Ensured consistent response format between OpenFDA and DailyMed data sources
 
 - **Added Missing Dependencies**:
   - Added beautifulsoup4==4.12.2 to requirements.txt to fix DailyMed router import failure
