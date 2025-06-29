@@ -150,7 +150,7 @@ async def list_resources(request: Request):
                 name="FDA Orange Book Search",
                 description="Search the FDA Orange Book for drug products and their therapeutic equivalence ratings (AB ratings)",
                 function=FunctionDef(
-                    name="searchOrangeBook",
+                    name="search_orange_book",
                     description="Search the FDA Orange Book for therapeutic equivalence data - RECOMMENDED for therapeutic equivalence queries",
                     parameters={
                         "type": "object",
@@ -183,11 +183,11 @@ async def list_resources(request: Request):
             
             # Bulk NDC Search for Complete Coverage
             Resource(
-                uri="pharmacy/bulk_ndc_search",
+                uri="pharmacy/bulk-ndc/search",
                 name="Bulk NDC Search",
                 description="Retrieve comprehensive NDC data with multi-page results aggregation for complete coverage",
                 function=FunctionDef(
-                    name="bulkNdcSearch",
+                    name="bulk_ndc_search",
                     description="Get complete list of all NDCs for a medication - use this for CSV exports or when all product variations are needed",
                     parameters={
                         "type": "object",

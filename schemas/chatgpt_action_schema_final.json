@@ -903,9 +903,9 @@
       }
     }
   },
-  "/pharmacy/bulk_ndc_search": {
+  "/pharmacy/bulk-ndc/search": {
     "get": {
-      "operationId": "bulkNdcSearch",
+      "operationId": "bulk_ndc_search",
       "summary": "Comprehensive NDC search with multi-page aggregation",
       "description": "Retrieves complete NDC listings for medications, overcoming pagination limitations. Designed for CSV exports and bulk data retrieval with up to 1000 results.",
       "parameters": [
@@ -945,12 +945,29 @@
             "type": "integer",
             "default": 1000
           }
+        },
+        {
+          "name": "format",
+          "in": "query",
+          "description": "Output format (csv or json)",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": ["csv", "json"],
+            "default": "json"
+          }
         }
       ],
       "responses": {
         "200": {
           "description": "Successful response with complete NDC product information",
           "content": {
+            "text/csv": {
+              "schema": {
+                "type": "string",
+                "description": "Formatted CSV containing all NDC product data"
+              }
+            },
             "application/json": {
               "schema": {
                 "type": "object",
@@ -1066,7 +1083,7 @@
   },
   "/fda/orange-book/search": {
     "get": {
-      "operationId": "searchOrangeBook",
+      "operationId": "search_orange_book",
       "summary": "Search FDA Orange Book for drug products and therapeutic equivalence",
       "description": "RECOMMENDED ENDPOINT for therapeutic equivalence queries. Search the FDA Orange Book to find drug products and their therapeutic equivalence ratings (AB ratings). This is the most reliable endpoint for determining if drugs have therapeutic equivalence.",
       "parameters": [
