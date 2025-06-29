@@ -15,7 +15,7 @@ from app.utils.api_clients import make_api_request
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.get("/bulk_ndc_search")
+@router.get("/bulk-ndc/search")
 async def bulk_ndc_search(
     name: Optional[str] = None,
     active_ingredient: Optional[str] = None,
