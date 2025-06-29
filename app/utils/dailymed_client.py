@@ -1,40 +1,22 @@
 """app/utils/dailymed_client.py — DailyMed API client for drug information fallback when OpenFDA data is unavailable"""
 
-import httpx
 import logging
-import re
 import json
-from typing import Dict, List, Optional, Any, Tuple
-from bs4 import BeautifulSoup
-import asyncio
+from typing import Dict, List, Any, Optional
 from urllib.parse import quote
+import httpx
+from bs4 import BeautifulSoup
+
+import asyncio
+from json import JSONDecodeError
+
+from app.utils.dailymed.parse import assemble_drug_record
 
 logger = logging.getLogger("app.utils.dailymed")
 
-# Constants for DailyMed API
+# Constants for DailyMed web scraping
 DAILYMED_SEARCH_URL = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json"
-DAILYMED_SPL_URL = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/{setid}.json"
-DAILYMED_SECTIONS_URL = "https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/{setid}/sections.json"
 DAILYMED_HTML_BASE = "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={setid}"
-
-# Common section names and their standardized keys
-SECTION_NAME_MAPPING = {
-    "indications & usage": "indications_and_usage",
-    "indications and usage": "indications_and_usage",
-    "dosage & administration": "dosage_and_administration",
-    "dosage and administration": "dosage_and_administration",
-    "contraindications": "contraindications",
-    "warnings": "warnings",
-    "warnings and precautions": "warnings",
-    "adverse reactions": "adverse_reactions",
-    "drug interactions": "drug_interactions",
-    "clinical pharmacology": "clinical_pharmacology",
-    "mechanism of action": "mechanism_of_action",
-    "pharmacokinetics": "pharmacokinetics",
-    "how supplied": "how_supplied",
-    "description": "description",
-    "active ingredient": "active_ingredient"
-}
 
 async def search_dailymed(drug_name: str, limit: int = 10) -> List[Dict[str, Any]]:
     """
@@ -56,7 +38,7 @@ async def search_dailymed(drug_name: str, limit: int = 10) -> List[Dict[str, Any
     search_url = f"{DAILYMED_SEARCH_URL}?drug_name={encoded_name}&page=1&pagesize={limit}"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(search_url)
             response.raise_for_status()
             data = response.json()
@@ -70,7 +52,7 @@ async def search_dailymed(drug_name: str, limit: int = 10) -> List[Dict[str, Any
     except httpx.HTTPError as e:
         logger.error(f"HTTP error during DailyMed search: {e}")
         return []
-    except json.JSONDecodeError as e:
+    except JSONDecodeError as e:
         logger.error(f"JSON decode error during DailyMed search: {e}")
         return []
     except Exception as e:
@@ -79,72 +61,50 @@ async def search_dailymed(drug_name: str, limit: int = 10) -> List[Dict[str, Any
 
 async def get_spl_data(setid: str) -> Dict[str, Any]:
     """
-    Get Structured Product Labeling (SPL) data for a drug using its setid.
+    Retrieve structured SPL data for a drug from DailyMed using its setid.
     
     Args:
         setid: The DailyMed setid for the drug
         
     Returns:
-        Dictionary containing SPL data
+        Dictionary containing structured drug information
     """
     if not setid or len(setid.strip()) == 0:
-        return {"error": "Invalid setid provided"}
+        logger.warning("Empty setid provided for DailyMed SPL data")
+        return {"error": "Invalid setid"}
+    
+    # Construct the URL for this setid
+    url = DAILYMED_HTML_BASE.format(setid=setid)
+    
+    # Browser-like headers to avoid 415 errors
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": "https://dailymed.nlm.nih.gov/dailymed/",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0"
+    }
     
     try:
-        # Get basic SPL metadata
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "Medical-MCP-Server/1.0"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(DAILYMED_SPL_URL.format(setid=setid), headers=headers)
+        # Fetch the HTML content
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers, follow_redirects=True)
             response.raise_for_status()
-            spl_metadata = response.json()
             
-            # Get SPL section data
-            sections_response = await client.get(DAILYMED_SECTIONS_URL.format(setid=setid), headers=headers)
-            sections_response.raise_for_status()
-            sections_data = sections_response.json()
-        
-        # Extract useful section content
-        processed_data = {}
-        if "data" in sections_data and isinstance(sections_data["data"], list):
-            for section in sections_data["data"]:
-                if "title" in section and "text" in section:
-                    section_title = section["title"].lower()
-                    
-                    # Map to standardized section names
-                    for key_pattern, normalized_key in SECTION_NAME_MAPPING.items():
-                        if key_pattern in section_title:
-                            # Simple HTML parsing to extract text
-                            soup = BeautifulSoup(section["text"], 'html.parser')
-                            processed_data[normalized_key] = soup.get_text(separator=' ', strip=True)
-                            break
-        
-        # Extract drug names and other basic info from metadata
-        result = {
-            "setId": setid,
-            "data": processed_data
-        }
-        
-        if "data" in spl_metadata:
-            # Add drug name, active ingredient, and other basic metadata if available
-            for key in ["drug_name", "active_ingredient", "drug_class", "marketing_category"]:
-                if key in spl_metadata["data"]:
-                    result[key] = spl_metadata["data"][key]
-        
-        return result
-        
+            # Parse HTML with BeautifulSoup
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Delegate assembly to helper for JSON-friendly structure
+            return assemble_drug_record(soup, url=url, setid=setid)
+            
     except httpx.HTTPError as e:
-        logger.error(f"HTTP error during DailyMed SPL retrieval: {e}")
+        logger.error(f"HTTP error during DailyMed HTML scraping: {e}")
         return {"error": f"HTTP error: {str(e)}"}
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error during DailyMed SPL retrieval: {e}")
-        return {"error": f"JSON decode error: {str(e)}"}
     except Exception as e:
-        logger.error(f"Unexpected error during DailyMed SPL retrieval: {e}")
-        return {"error": f"Unexpected error: {str(e)}"}
+        logger.error(f"Unexpected error during DailyMed HTML scraping: {e}", exc_info=True)
+        return {"error": f"Error processing data: {str(e)}"}
 
 async def find_drug_info_with_dailymed(drug_name: str) -> List[Dict[str, Any]]:
     """
@@ -158,43 +118,28 @@ async def find_drug_info_with_dailymed(drug_name: str) -> List[Dict[str, Any]]:
     Returns:
         List of structured drug data from DailyMed
     """
-    # First search for the drug to get setids
-    search_results = await search_dailymed(drug_name, limit=5)
-    
-    if not search_results:
+    if not drug_name or len(drug_name.strip()) == 0:
+        logger.warning("Empty drug name provided to DailyMed fallback")
         return []
     
-    # For each search result, get the detailed SPL data
-    # We'll limit to top 3 results to avoid making too many requests
-    tasks = []
-    for result in search_results[:3]:
-        if "setid" in result:
-            tasks.append(get_spl_data(result["setid"]))
+    drug_name = drug_name.strip()
+    logger.info(f"Finding drug info for '{drug_name}' using DailyMed fallback")
     
-    if not tasks:
+    try:
+        # First search for the drug by name
+        search_results = await search_dailymed(drug_name)
+        if not search_results:
+            logger.info(f"No DailyMed results found for '{drug_name}'")
+            return []
+
+        # Fetch detailed SPL data concurrently for the top 3 setids
+        setids = [r["setid"] for r in search_results[:3] if r.get("setid")]
+        tasks = [get_spl_data(sid) for sid in setids]
+        spl_results = await asyncio.gather(*tasks)
+
+        # Filter out any errors and return structured records
+        return [res for res in spl_results if "error" not in res]
+        
+    except Exception as e:
+        logger.error(f"Error in DailyMed fallback for '{drug_name}': {str(e)}", exc_info=True)
         return []
-    
-    # Fetch all SPL data in parallel
-    spl_results = await asyncio.gather(*tasks)
-    
-    # Process and normalize the data for consistent access
-    processed_results = []
-    for result in spl_results:
-        if "error" not in result:
-            # Create a structured response with consistent field names
-            processed_data = {
-                "source": "dailymed",
-                "setid": result.get("setId", ""),
-                "brand_name": result.get("drug_name", ""),
-                "generic_name": result.get("active_ingredient", ""),
-                "indications": result.get("data", {}).get("indications_and_usage", ""),
-                "dosage": result.get("data", {}).get("dosage_and_administration", ""),
-                "warnings": result.get("data", {}).get("warnings", ""),
-                "contraindications": result.get("data", {}).get("contraindications", ""),
-                "adverse_reactions": result.get("data", {}).get("adverse_reactions", ""),
-                "drug_interactions": result.get("data", {}).get("drug_interactions", ""),
-                "url": DAILYMED_HTML_BASE.format(setid=result.get("setId", ""))
-            }
-            processed_results.append(processed_data)
-    
-    return processed_results

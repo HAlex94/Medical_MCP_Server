@@ -1224,6 +1224,492 @@
       }
     }
   },
+  "/export/orange-book/export": {
+    "get": {
+      "operationId": "exportOrangeBookData",
+      "summary": "Export FDA Orange Book data as formatted CSV or JSON",
+      "description": "Export FDA Orange Book therapeutic equivalence data in a ready-to-use format. The output is available as CSV (default) or JSON and includes all relevant therapeutic equivalence details. This endpoint is optimized for data export to external systems or for AI assistants that need formatted data.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Drug name to search for",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "active_ingredient",
+          "in": "query",
+          "description": "Active ingredient to search for",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "format",
+          "in": "query",
+          "description": "Output format (csv or json)",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": ["csv", "json"],
+            "default": "csv"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum number of results to return",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 100
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with formatted Orange Book data",
+          "content": {
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad request - missing required parameters"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
+  "/export/dailymed/search": {
+    "get": {
+      "operationId": "searchDailyMedData",
+      "summary": "Search DailyMed for drug information",
+      "description": "Search DailyMed for drug information when FDA API data is insufficient. Returns search results with drug names and URLs.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Drug name to search for",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum number of search results to return",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 5
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful search results from DailyMed",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {"type": "string"},
+                  "total_results": {"type": "integer"},
+                  "results": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "drug_name": {"type": "string"},
+                        "url": {"type": "string"},
+                        "set_id": {"type": "string"},
+                        "manufacturer": {"type": "string"}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
+  "/fda/dailymed-fallback": {
+    "get": {
+      "operationId": "searchDailyMedDrugs",
+      "summary": "Search DailyMed for drug products",
+      "description": "Search DailyMed for drug products by name using improved search extraction. Returns a list of matching drugs with metadata.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Drug name to search for",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with DailyMed search results",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "setid": {
+                      "type": "string",
+                      "description": "DailyMed set ID for the drug"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "Drug title including brand/generic name and manufacturer"
+                    },
+                    "spl_version": {
+                      "type": "integer",
+                      "description": "SPL version number"
+                    },
+                    "publication_date": {
+                      "type": ["string", "null"],
+                      "description": "Publication date of the drug information"
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "Source of the drug data, always 'dailymed' for this endpoint"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad request - missing required parameters"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
+  "/fda/dailymed-fallback/spl/{setid}": {
+    "get": {
+      "operationId": "getDailyMedSplData",
+      "summary": "Get comprehensive DailyMed SPL data for a drug",
+      "description": "Retrieve enhanced drug data from DailyMed using the improved clinical section extraction. Returns complete clinical sections, active/inactive ingredients, tables, and metadata.",
+      "parameters": [
+        {
+          "name": "setid",
+          "in": "path",
+          "description": "DailyMed set ID for the drug",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with comprehensive drug data",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metadata": {
+                    "type": "object",
+                    "properties": {
+                      "set_id": {
+                        "type": "string",
+                        "description": "DailyMed set ID"
+                      },
+                      "drug_name": {
+                        "type": "string",
+                        "description": "Name of the drug"
+                      },
+                      "manufacturer": {
+                        "type": "string",
+                        "description": "Manufacturer of the drug"
+                      },
+                      "drug_class": {
+                        "type": "string",
+                        "description": "Drug class"
+                      },
+                      "ndc_codes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "List of NDC codes for the drug"
+                      },
+                      "url": {
+                        "type": "string",
+                        "description": "URL to the DailyMed page"
+                      }
+                    }
+                  },
+                  "ingredients": {
+                    "type": "object",
+                    "properties": {
+                      "active": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "List of active ingredients"
+                      },
+                      "inactive": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "List of inactive ingredients"
+                      }
+                    }
+                  },
+                  "clinical_sections": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Clinical sections like INDICATIONS AND USAGE, DOSAGE AND ADMINISTRATION, etc."
+                  },
+                  "sections": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Additional sections from the drug label"
+                  },
+                  "tables": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "HTML tables from the drug label"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Drug not found in DailyMed with the given set ID"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
+  "/export/dailymed/drug": {
+    "get": {
+      "operationId": "getDailyMedDrugData",
+      "summary": "Get detailed drug information from DailyMed",
+      "description": "Retrieve comprehensive drug information from DailyMed including sections from the drug label, tables, and basic metadata.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Drug name to search for and retrieve data",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "format",
+          "in": "query",
+          "description": "Output format (csv or json)",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": ["csv", "json"],
+            "default": "json"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with drug data",
+          "content": {
+            "text/csv": {
+              "schema": {"type": "string"}
+            },
+            "application/json": {
+              "schema": {"type": "object"}
+            }
+          }
+        },
+        "404": {
+          "description": "Drug not found in DailyMed"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
+  "/export/fda/label-fallback": {
+    "get": {
+      "operationId": "getDrugLabelWithFallback",
+      "summary": "Get drug label with DailyMed fallback",
+      "description": "Retrieve drug label information with automatic fallback to DailyMed if FDA APIs don't return sufficient data.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Drug name to search for",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "format",
+          "in": "query",
+          "description": "Output format (csv or json)",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": ["csv", "json"],
+            "default": "json"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with drug label information",
+          "content": {
+            "text/csv": {
+              "schema": {"type": "string"}
+            },
+            "application/json": {
+              "schema": {"type": "object"}
+            }
+          }
+        },
+        "404": {
+          "description": "Drug not found in FDA or DailyMed"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
+  "/export/ndc/export": {
+    "get": {
+      "operationId": "exportNdcData",
+      "summary": "Export NDC data as formatted CSV or JSON",
+      "description": "Export National Drug Code (NDC) data in a ready-to-use format. The output is available as CSV (default) or JSON and includes all product and packaging details. This endpoint is optimized for data export to external systems or for AI assistants that need formatted NDC data.",
+      "parameters": [
+        {
+          "name": "name",
+          "in": "query",
+          "description": "Brand or generic name of the drug",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "active_ingredient",
+          "in": "query",
+          "description": "Active ingredient in the drug",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "manufacturer",
+          "in": "query",
+          "description": "Name of the manufacturer",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "format",
+          "in": "query",
+          "description": "Output format (csv or json)",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": ["csv", "json"],
+            "default": "csv"
+          }
+        },
+        {
+          "name": "filter_dosage_form",
+          "in": "query",
+          "description": "Optional filter for specific dosage forms (e.g. 'TABLET')",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "max_results",
+          "in": "query",
+          "description": "Maximum number of total results to return",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "default": 1000
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Successful response with formatted NDC data",
+          "content": {
+            "text/csv": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad request - missing required parameters"
+        },
+        "500": {
+          "description": "Server error processing the request"
+        }
+      }
+    }
+  },
   "/fda/orange-book/equivalent-products": {
     "get": {
       "operationId": "findTherapeuticEquivalents",
