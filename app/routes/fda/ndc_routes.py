@@ -153,3 +153,61 @@ async def search_ndc_compact(
             status_code=500,
             detail=f"Error retrieving NDC data: {str(e)}"
         )
+
+
+async def search_drug(name: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Search for drug by name using OpenFDA API. This function is used by the
+    dailymed_routes.py module for fallback functionality.
+    
+    Args:
+        name: Drug name to search for
+        limit: Maximum number of results to return
+    
+    Returns:
+        List of drug information objects
+    """
+    logger.info(f"Searching for drug by name: {name}")
+    
+    try:
+        # Create search query focused on drug name
+        search_string = f"(brand_name:{name}+generic_name:{name})"
+        
+        # FDA API URL with properly formatted search parameters
+        url = f"https://api.fda.gov/drug/ndc.json?search={search_string}&limit={limit}"
+        
+        # Check for FDA API key
+        api_key = os.environ.get('FDA_API_KEY')
+        if api_key:
+            url = f"{url}&api_key={api_key}"
+            
+        # Special handling for Render deployment - bypass caching if needed
+        use_cache = not (os.environ.get('RENDER') or os.environ.get('EMERGENCY_UNCACHED'))
+        
+        response = await make_api_request(url, use_cache=use_cache)
+        
+        # Format the results for consistency with DailyMed format
+        results = []
+        if "results" in response:
+            for product in response["results"]:
+                # Create a standardized response format
+                drug_info = {
+                    "brand_name": product.get("brand_name", ""),
+                    "generic_name": product.get("generic_name", ""),
+                    "dosage_form": product.get("dosage_form", ""),
+                    "product_ndc": product.get("product_ndc", ""),
+                    "manufacturer": product.get("openfda", {}).get("manufacturer_name", [""])[0] 
+                                  if product.get("openfda") else "",
+                    "active_ingredients": [{
+                        "name": ing.get("name", ""), 
+                        "strength": ing.get("strength", "")
+                    } for ing in product.get("active_ingredients", [])],
+                }
+                results.append(drug_info)
+                
+        return results
+    
+    except Exception as e:
+        logger.error(f"Error in search_drug: {str(e)}")
+        # Return empty list instead of raising exception to support fallback pattern
+        return []

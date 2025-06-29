@@ -92,13 +92,18 @@ async def get_spl_data(setid: str) -> Dict[str, Any]:
     
     try:
         # Get basic SPL metadata
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Medical-MCP-Server/1.0"
+        }
+        
         async with httpx.AsyncClient() as client:
-            response = await client.get(DAILYMED_SPL_URL.format(setid=setid))
+            response = await client.get(DAILYMED_SPL_URL.format(setid=setid), headers=headers)
             response.raise_for_status()
             spl_metadata = response.json()
             
             # Get SPL section data
-            sections_response = await client.get(DAILYMED_SECTIONS_URL.format(setid=setid))
+            sections_response = await client.get(DAILYMED_SECTIONS_URL.format(setid=setid), headers=headers)
             sections_response.raise_for_status()
             sections_data = sections_response.json()
         
