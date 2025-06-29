@@ -1,11 +1,11 @@
+"""app/main.py — FastAPI application entry point, router registration, and server configuration"""
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import logging
 import uvicorn
 import importlib
 import sys
-import os
 from fastapi.responses import JSONResponse
 
 # Setup logging first so we can log import errors
@@ -15,24 +15,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Define routers to be imported
-router_modules = {
-    "mcp_handler": "app.routes.mcp_handler",
-    "fda_router": "app.routes.fda",
-    "fda_v3_router": "app.routes.fda.v3",
-    "therapeutic_router": "app.routes.fda.therapeutic_routes",
-    "pharmacy_router": "app.routes.pharmacy"
-}
+# Dictionary to hold all imported routers
+routers = {}
+
+# Import all required modules with error handling
+module_paths = [
+    ('mcp_handler', 'app.routes.mcp_handler'),
+    ('fda_router', 'app.routes.fda'),
+    ('fda_v3_router', 'app.routes.fda.v3'),
+    ('therapeutic_router', 'app.routes.fda.therapeutic_routes'),
+    ('dailymed_router', 'app.routes.fda.dailymed_routes'),
+    ('pharmacy_router', 'app.routes.pharmacy'),
+    ('export_router', 'app.routes.export_routes')
+]
 
 # Import routers safely with error handling
 routers = {}
-for router_name, module_path in router_modules.items():
+for router_name, module_path in module_paths:
     try:
+        logger.info(f"Attempting to import {router_name} from {module_path}")
         module = importlib.import_module(module_path)
-        routers[router_name] = getattr(module, 'router')
+        router_obj = getattr(module, 'router')
+        routers[router_name] = router_obj
         logger.info(f"Successfully imported {router_name} from {module_path}")
     except (ImportError, AttributeError) as e:
         logger.error(f"Failed to import {router_name} from {module_path}: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
         logger.error(f"Python path: {sys.path}")
 
 
@@ -94,13 +102,9 @@ if "pharmacy_router" in routers:
     app.include_router(routers["pharmacy_router"], prefix="/pharmacy")
     logger.info("Included pharmacy_router with prefix /pharmacy")
 
-# Mount static files directory
-static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    logger.info(f"Mounted static files directory: {static_dir}")
-else:
-    logger.warning(f"Static directory not found at {static_dir}")
+if "export_router" in routers:
+    app.include_router(routers["export_router"], prefix="/export")
+    logger.info("Included export_router with prefix /export")
 
 @app.get("/")
 async def root():
