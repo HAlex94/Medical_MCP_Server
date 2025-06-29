@@ -25,7 +25,8 @@ async def bulk_ndc_search(
     manufacturer: Optional[str] = None,
     max_results: int = 1000,
     format: Optional[str] = None,  # Format option: csv, txt, or json (default)
-    filename: Optional[str] = None  # Optional custom filename for downloads
+    filename: Optional[str] = None,  # Optional custom filename for downloads
+    include_additional_fields: bool = False  # Whether to include fields beyond the default set
 ):
     """
     Comprehensive NDC search that retrieves multiple pages of results and aggregates them.
@@ -40,6 +41,8 @@ async def bulk_ndc_search(
     - max_results: Maximum number of total results to return (default: 1000)
     - format: Output format (json, csv, txt). If specified, returns downloadable file
     - filename: Custom filename for the download (without extension)
+    - include_additional_fields: Include fields beyond the default set (NDC, brand_name, generic_name, 
+                               strength, route, dosage_form, manufacturer, package_description)
     
     Returns:
     - If format is None: JSON response with product data
@@ -95,7 +98,7 @@ async def bulk_ndc_search(
                 filename = f"ndc_data_{search_term}_{timestamp}"
             
             # Convert to simplified format for better export
-            simplified_products = ndc_products_to_simplified_format(products_to_return)
+            simplified_products = ndc_products_to_simplified_format(products_to_return, include_additional_fields)
             
             if format.lower() == 'csv':
                 # Generate CSV content

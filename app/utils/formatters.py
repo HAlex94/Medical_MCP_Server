@@ -115,12 +115,14 @@ def json_to_txt(data: List[Dict[str, Any]], include_headers: bool = True) -> str
     
     return '\n'.join(txt_lines)
 
-def ndc_products_to_simplified_format(products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def ndc_products_to_simplified_format(products: List[Dict[str, Any]], include_additional_fields: bool = False) -> List[Dict[str, Any]]:
     """
-    Convert NDC product data to a simplified flat format that's more suitable for CSV export.
+    Convert NDC product data to a simplified flat format that's more suitable for CSV/TXT export.
+    Uses package NDC as the primary identifier and includes standard default fields.
     
     Args:
         products: List of NDC product dictionaries
+        include_additional_fields: Whether to include extra fields beyond the default set
         
     Returns:
         List of simplified flat dictionaries
@@ -131,49 +133,69 @@ def ndc_products_to_simplified_format(products: List[Dict[str, Any]]) -> List[Di
         # Extract package NDC information
         packaging = product.get("packaging", [])
         
+        # Extract strength from active ingredients
+        active_ingredients = product.get("active_ingredients", [])
+        strength = ""
+        if active_ingredients:
+            # Combine strengths if multiple ingredients
+            strength_values = [ing.get("strength", "") for ing in active_ingredients if ing.get("strength")]
+            strength = "; ".join(strength_values)
+        
         # If there's packaging info, create one row per package
         if packaging:
             for package in packaging:
+                # Create entry with default fields in the specified order
                 simplified_product = {
-                    "product_ndc": product.get("product_ndc", ""),
+                    "NDC": package.get("package_ndc", ""),
                     "brand_name": product.get("brand_name", ""),
                     "generic_name": product.get("generic_name", ""),
-                    "dosage_form": product.get("dosage_form", ""),
+                    "strength": strength,
                     "route": product.get("route", ""),
-                    "marketing_status": product.get("marketing_status", ""),
-                    "manufacturer": product.get("manufacturer_name", ""),
-                    "package_ndc": package.get("package_ndc", ""),
+                    "dosage_form": product.get("dosage_form", ""),
+                    "manufacturer": product.get("openfda", {}).get("manufacturer_name", ["Unknown"])[0] 
+                                   if product.get("openfda") else product.get("manufacturer_name", ""),
                     "package_description": package.get("description", ""),
-                    "marketing_start_date": package.get("marketing_start_date", ""),
                 }
                 
-                # Add active ingredients information
-                active_ingredients = product.get("active_ingredients", [])
-                for i, ingredient in enumerate(active_ingredients):
-                    simplified_product[f"ingredient_{i+1}_name"] = ingredient.get("name", "")
-                    simplified_product[f"ingredient_{i+1}_strength"] = ingredient.get("strength", "")
+                # Include additional fields if requested
+                if include_additional_fields:
+                    simplified_product.update({
+                        "product_ndc": product.get("product_ndc", ""),
+                        "marketing_status": product.get("marketing_status", ""),
+                        "marketing_start_date": package.get("marketing_start_date", ""),
+                    })
+                    
+                    # Add individual active ingredients information
+                    for i, ingredient in enumerate(active_ingredients):
+                        simplified_product[f"ingredient_{i+1}_name"] = ingredient.get("name", "")
+                        simplified_product[f"ingredient_{i+1}_strength"] = ingredient.get("strength", "")
                 
                 simplified.append(simplified_product)
         else:
-            # No packaging info, create a single row
+            # No packaging info, create a single row with product NDC
             simplified_product = {
-                "product_ndc": product.get("product_ndc", ""),
+                "NDC": product.get("product_ndc", ""),  # Use product NDC if no package NDC
                 "brand_name": product.get("brand_name", ""),
                 "generic_name": product.get("generic_name", ""),
-                "dosage_form": product.get("dosage_form", ""),
+                "strength": strength,
                 "route": product.get("route", ""),
-                "marketing_status": product.get("marketing_status", ""),
-                "manufacturer": product.get("manufacturer_name", ""),
-                "package_ndc": "",
+                "dosage_form": product.get("dosage_form", ""),
+                "manufacturer": product.get("openfda", {}).get("manufacturer_name", ["Unknown"])[0] 
+                               if product.get("openfda") else product.get("manufacturer_name", ""),
                 "package_description": "",
-                "marketing_start_date": "",
             }
             
-            # Add active ingredients information
-            active_ingredients = product.get("active_ingredients", [])
-            for i, ingredient in enumerate(active_ingredients):
-                simplified_product[f"ingredient_{i+1}_name"] = ingredient.get("name", "")
-                simplified_product[f"ingredient_{i+1}_strength"] = ingredient.get("strength", "")
+            # Include additional fields if requested
+            if include_additional_fields:
+                simplified_product.update({
+                    "marketing_status": product.get("marketing_status", ""),
+                    "marketing_start_date": "",
+                })
+                
+                # Add individual active ingredients information
+                for i, ingredient in enumerate(active_ingredients):
+                    simplified_product[f"ingredient_{i+1}_name"] = ingredient.get("name", "")
+                    simplified_product[f"ingredient_{i+1}_strength"] = ingredient.get("strength", "")
             
             simplified.append(simplified_product)
     
