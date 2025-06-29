@@ -4,6 +4,10 @@
 
 ## Recent Changes (Last 10 entries)
 
+[2025-06-29] ➜ app/routes/pharmacy/bulk_ndc_routes.py: Updated Bulk NDC export to use package NDC as primary identifier with standardized field set
+[2025-06-29] ➜ app/utils/formatters.py: Enhanced formatter to support standard and extended field sets for NDC data
+[2025-06-29] ➜ app/routes/pharmacy/bulk_ndc_routes.py: Added file export functionality (CSV, TXT) to Bulk NDC endpoint
+[2025-06-29] ➜ app/utils/formatters.py: Created new utility module for data format conversion
 [2025-06-29] ➜ app/utils/dailymed_client.py: Fixed SPL data retrieval by adding proper Accept headers to avoid 415 errors
 [2025-06-29] ➜ app/routes/fda/ndc_routes.py: Added search_drug function required by DailyMed fallback functionality
 [2025-06-29] ➜ requirements.txt: Added beautifulsoup4 dependency required for DailyMed client
@@ -19,6 +23,25 @@
 [2025-06-28] ➜ app/routes/export_routes.py: Fixed bulk data export endpoints for NDC and TE code datasets
 
 ## Detailed Update History
+
+### Bulk NDC File Export Functionality (2025-06-29)
+
+- **Added File Export for Bulk NDC Endpoint**:
+  - Enhanced `/pharmacy/bulk-ndc/search` to support downloadable file formats
+  - Added support for CSV and TXT export formats
+  - Implemented query parameter `format` to specify desired output format
+  - Added `filename` parameter for custom download filenames
+
+- **Created Data Format Conversion Utilities**:
+  - Implemented `json_to_csv()` for converting JSON data to CSV format
+  - Implemented `json_to_txt()` for converting JSON data to tab-delimited format
+  - Added `ndc_products_to_simplified_format()` to flatten complex NDC data for cleaner exports
+  - Ensured proper handling of nested data structures and lists
+
+- **Improved User Experience**:
+  - Automatic filename generation with timestamps when not specified
+  - Proper HTTP headers for downloadable files (`Content-Disposition`, media types)
+  - Maintained backward compatibility with existing JSON API
 
 ### Deployment Fixes for DailyMed and Bulk NDC (2025-06-29)
 
