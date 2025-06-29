@@ -1,9 +1,11 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import logging
 import uvicorn
 import importlib
 import sys
+import os
 from fastapi.responses import JSONResponse
 
 # Setup logging first so we can log import errors
@@ -91,6 +93,14 @@ if "therapeutic_router" in routers:
 if "pharmacy_router" in routers:
     app.include_router(routers["pharmacy_router"], prefix="/pharmacy")
     logger.info("Included pharmacy_router with prefix /pharmacy")
+
+# Mount static files directory
+static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    logger.info(f"Mounted static files directory: {static_dir}")
+else:
+    logger.warning(f"Static directory not found at {static_dir}")
 
 @app.get("/")
 async def root():

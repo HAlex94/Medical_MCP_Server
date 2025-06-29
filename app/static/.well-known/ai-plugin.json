@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Medical MCP Plugin",
+  "name_for_model": "medicalMCPPlugin",
+  "description_for_human": "Access FDA drug information, therapeutic equivalence, and NDC data through a reliable medical information API.",
+  "description_for_model": "Use this plugin to access FDA drug information, including drug labels, therapeutic equivalence ratings from the Orange Book, and NDC directory information. Always use the searchOrangeBook operation for therapeutic equivalence queries and bulkNdcSearch for comprehensive NDC data retrieval.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://medical-mcp-server.onrender.com/openapi.json",
+    "is_user_authenticated": false
+  },
+  "logo_url": "https://medical-mcp-server.onrender.com/static/logo.png",
+  "contact_email": "support@example.com",
+  "legal_info_url": "https://example.com/legal"
+}
