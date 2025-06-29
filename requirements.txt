@@ -11,6 +11,7 @@ starlette==0.27.0
 json5==0.9.14
 ratelimit==2.2.1
 requests==2.31.0
+beautifulsoup4==4.12.2
 
 # Testing
 pytest==7.3.1
